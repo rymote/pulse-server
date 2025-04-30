@@ -4,6 +4,10 @@
         <TargetFramework>net9.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+
+        <PackageId>Rymote.Pulse.AspNet</PackageId>
+        <Authors>Rymote</Authors>
+        <Description>ASP.NET integration for Rymote.Pulse</Description>
     </PropertyGroup>
 
     <ItemGroup>

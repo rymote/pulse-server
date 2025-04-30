@@ -1,0 +1,55 @@
+name: Publish NuGet Packages
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Extract version
+        id: extract_version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Restore & Build
+        run: |
+          dotnet restore
+          dotnet build --configuration Release --no-restore
+
+      - name: Pack Rymote.Pulse.Core
+        run: |
+          dotnet pack Rymote.Pulse.Core/Rymote.Pulse.Core.csproj \
+            --configuration Release \
+            --no-build \
+            --output ./artifacts \
+            /p:Version=${{ env.VERSION }}
+
+      - name: Pack Rymote.Pulse.AspNet
+        run: |
+          dotnet pack Rymote.Pulse.AspNet/Rymote.Pulse.AspNet.csproj \
+            --configuration Release \
+            --no-build \
+            --output ./artifacts \
+            /p:Version=${{ env.VERSION }}
+
+      - name: Push to nuget.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          dotnet nuget push artifacts/*.nupkg \
+            --api-key $NUGET_API_KEY \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate

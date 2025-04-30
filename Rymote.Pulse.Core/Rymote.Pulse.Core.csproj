@@ -4,10 +4,14 @@
         <TargetFramework>net9.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+
+        <PackageId>Rymote.Pulse.Core</PackageId>
+        <Authors>Rymote</Authors>
+        <Description>Core library for Rymote.Pulse</Description>
     </PropertyGroup>
 
     <ItemGroup>
-      <PackageReference Include="Ulid" Version="1.3.4" />
+      <PackageReference Include="MessagePack" Version="3.1.3" />
     </ItemGroup>
 
 </Project>
