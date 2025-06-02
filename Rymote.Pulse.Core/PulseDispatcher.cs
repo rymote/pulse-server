@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.WebSockets;
+using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Rymote.Pulse.Core.Connections;
@@ -16,13 +17,14 @@ using Rymote.Pulse.Core.Streaming;
 
 namespace Rymote.Pulse.Core;
 
-public class PulseDispatcher
+public class PulseDispatcher : IDisposable
 {
     public readonly PulseConnectionManager ConnectionManager;
     private readonly IPulseLogger _logger;
     private readonly Dictionary<(string Handle, string Version), Func<PulseContext, Task>> _handlers;
     private readonly PulseMiddlewarePipeline _pipeline;
-    private readonly ConcurrentDictionary<string, Channel<byte[]>> _inboundStreams;
+    private readonly ConcurrentDictionary<string, (Channel<byte[]> Channel, DateTime LastActivity)> _inboundStreams;
+    private readonly Timer _cleanupTimer;
 
     public PulseDispatcher(PulseConnectionManager connectionManager, IPulseLogger logger)
     {
@@ -31,7 +33,26 @@ public class PulseDispatcher
         _logger = logger;
         _handlers = new Dictionary<(string, string), Func<PulseContext, Task>>(new TupleStringComparer());
         _pipeline = new PulseMiddlewarePipeline();
-        _inboundStreams = new ConcurrentDictionary<string, Channel<byte[]>>();
+        _inboundStreams = new ConcurrentDictionary<string, (Channel<byte[]>, DateTime)>();
+        _cleanupTimer = new Timer(CleanupAbandonedStreams, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
+    }
+
+    private void CleanupAbandonedStreams(object? state)
+    {
+        var cutoffTime = DateTime.UtcNow.AddMinutes(-5); // 5 minute timeout
+        var keysToRemove = _inboundStreams
+            .Where(kvp => kvp.Value.LastActivity < cutoffTime)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var key in keysToRemove)
+        {
+            if (_inboundStreams.TryRemove(key, out var streamInfo))
+            {
+                streamInfo.Channel.Writer.TryComplete();
+                _logger?.LogInfo($"Cleaned up abandoned stream: {key}");
+            }
+        }
     }
 
     public void Use(PulseMiddlewareDelegate middleware)
@@ -122,7 +143,7 @@ public class PulseDispatcher
         _handlers[(handle.ToLowerInvariant(), version.ToLowerInvariant())] = async context =>
         {
             string? clientCorrelationId = context.UntypedRequest.ClientCorrelationId;
-            if (clientCorrelationId != null && _inboundStreams.TryRemove(clientCorrelationId, out Channel<byte[]> channel))
+            if (clientCorrelationId != null && _inboundStreams.TryRemove(clientCorrelationId, out var streamInfo))
             {
                 async IAsyncEnumerable<TChunk> GetChunks(ChannelReader<byte[]> reader)
                 {
@@ -133,7 +154,7 @@ public class PulseDispatcher
                     }
                 }
                 
-                IAsyncEnumerable<TChunk> chunks = GetChunks(channel.Reader);
+                IAsyncEnumerable<TChunk> chunks = GetChunks(streamInfo.Channel.Reader);
                 await handlerFunc(chunks, context);
             }
 
@@ -178,14 +199,21 @@ public class PulseDispatcher
 
         if (envelope.Kind == PulseKind.STREAM && envelope.IsStreamChunk.HasValue && envelope.IsStreamChunk.Value && envelope.ClientCorrelationId != null)
         {
-            Channel<byte[]> channel = _inboundStreams.GetOrAdd(
+            var streamInfo = _inboundStreams.GetOrAdd(
                 envelope.ClientCorrelationId,
-                _ => Channel.CreateUnbounded<byte[]>());
+                _ => (Channel.CreateUnbounded<byte[]>(), DateTime.UtcNow));
             
-            await channel.Writer.WriteAsync(rawData);
+            // Update last activity time
+            _inboundStreams[envelope.ClientCorrelationId] = (streamInfo.Channel, DateTime.UtcNow);
+            
+            await streamInfo.Channel.Writer.WriteAsync(rawData);
             
             if (envelope.EndOfStream.HasValue && envelope.EndOfStream.Value)
-                channel.Writer.Complete();
+            {
+                streamInfo.Channel.Writer.Complete();
+                // Remove completed streams immediately
+                _inboundStreams.TryRemove(envelope.ClientCorrelationId, out _);
+            }
             
             return;
         }
@@ -216,5 +244,17 @@ public class PulseDispatcher
                 true,
                 CancellationToken.None);
         }
+    }
+
+    public void Dispose()
+    {
+        _cleanupTimer?.Dispose();
+        
+        // Clean up any remaining streams
+        foreach (var kvp in _inboundStreams)
+        {
+            kvp.Value.Channel.Writer.TryComplete();
+        }
+        _inboundStreams.Clear();
     }
 }

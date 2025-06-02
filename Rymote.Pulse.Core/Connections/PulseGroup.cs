@@ -8,6 +8,7 @@ public class PulseGroup
         = new ConcurrentDictionary<string, PulseConnection>();
 
     public string Name { get; }
+    public bool IsEmpty => _members.IsEmpty;
 
     public PulseGroup(string name) => Name = name;
 

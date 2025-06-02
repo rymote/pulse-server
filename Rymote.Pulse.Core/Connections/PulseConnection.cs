@@ -5,6 +5,8 @@ namespace Rymote.Pulse.Core.Connections;
 
 public class PulseConnection
 {
+    private const int MaxMetadataEntries = 100;
+    
     public string ConnectionId { get; }
     public WebSocket Socket { get; }
     public string NodeId { get; }
@@ -31,7 +33,15 @@ public class PulseConnection
             cancellationToken: cancellationToken
         );
     
-    public void SetMetadata(string key, object value) => _metadata[key] = value;
+    public void SetMetadata(string key, object value)
+    {
+        if (_metadata.Count >= MaxMetadataEntries && !_metadata.ContainsKey(key))
+        {
+            throw new InvalidOperationException($"Maximum metadata entries ({MaxMetadataEntries}) exceeded");
+        }
+        
+        _metadata[key] = value;
+    }
 
     public bool TryGetMetadata<T>(string key, out T? value)
     {

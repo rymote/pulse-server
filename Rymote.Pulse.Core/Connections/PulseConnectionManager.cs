@@ -4,6 +4,7 @@ using System.Net.WebSockets;
 using System.Threading.Tasks;
 using Rymote.Pulse.Core.Cluster;
 using Rymote.Pulse.Core.Connections;
+using Rymote.Pulse.Core.Logging;
 
 namespace Rymote.Pulse.Core.Connections;
 
@@ -14,11 +15,13 @@ public class PulseConnectionManager
     
     private readonly IClusterStore? _clusterStore;
     private readonly string _nodeId;
+    private readonly IPulseLogger? _logger;
 
-    public PulseConnectionManager(IClusterStore? clusterStore = null, string? nodeId = null)
+    public PulseConnectionManager(IClusterStore? clusterStore = null, string? nodeId = null, IPulseLogger? logger = null)
     {
         _clusterStore = clusterStore;
         _nodeId = nodeId ?? Environment.MachineName;
+        _logger = logger;
     }
 
     public async Task<PulseConnection> AddConnectionAsync(string connectionId, WebSocket socket)
@@ -36,8 +39,24 @@ public class PulseConnectionManager
     {
         _connections.TryRemove(connectionId, out _);
 
-        foreach (PulseGroup group in _groups.Values)
-            group.Remove(connectionId);
+        // Track groups to check for emptiness
+        var groupsToCheck = new List<string>();
+        
+        foreach (var kvp in _groups)
+        {
+            kvp.Value.Remove(connectionId);
+            if (kvp.Value.IsEmpty)
+                groupsToCheck.Add(kvp.Key);
+        }
+        
+        // Remove empty groups
+        foreach (var groupName in groupsToCheck)
+        {
+            if (_groups.TryRemove(groupName, out var group) && group.IsEmpty)
+            {
+                _logger?.LogInfo($"Removed empty group: {groupName}");
+            }
+        }
 
         if (_clusterStore != null)
             await _clusterStore.RemoveConnectionAsync(connectionId);
@@ -70,7 +89,15 @@ public class PulseConnectionManager
         if (_connections.TryGetValue(connectionId, out PulseConnection? connection))
             await RemoveFromGroupAsync(groupName, connection);
         else if (_groups.TryGetValue(groupName, out PulseGroup? group))
+        {
             group.Remove(connectionId);
+            
+            // Remove empty groups
+            if (group.IsEmpty && _groups.TryRemove(groupName, out _))
+            {
+                _logger?.LogInfo($"Removed empty group: {groupName}");
+            }
+        }
 
         if (_clusterStore != null)
             await _clusterStore.RemoveFromGroupAsync(groupName, connectionId);
@@ -79,7 +106,15 @@ public class PulseConnectionManager
     public async Task RemoveFromGroupAsync(string groupName, PulseConnection connection)
     {
         if (_groups.TryGetValue(groupName, out var group))
+        {
             group.Remove(connection.ConnectionId);
+            
+            // Remove empty groups
+            if (group.IsEmpty && _groups.TryRemove(groupName, out _))
+            {
+                _logger?.LogInfo($"Removed empty group: {groupName}");
+            }
+        }
 
         if (_clusterStore != null)
             await _clusterStore.RemoveFromGroupAsync(groupName, connection.ConnectionId);

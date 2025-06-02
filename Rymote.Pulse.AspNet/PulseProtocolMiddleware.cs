@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Net.WebSockets;
 using System.Text;
@@ -74,9 +75,14 @@ namespace Rymote.Pulse.AspNet;
             IPulseLogger pulseLogger)
         {
             const int BufferSizeInBytes = 4096;
-            byte[] receiveBuffer = new byte[BufferSizeInBytes];
-            ArraySegment<byte> receiveBufferSegment = new ArraySegment<byte>(receiveBuffer);
-            List<byte> messageAccumulator = new List<byte>();
+            const int MaxMessageSize = 10 * 1024 * 1024; // 10MB limit
+            
+            var arrayPool = ArrayPool<byte>.Shared;
+            byte[] receiveBuffer = arrayPool.Rent(BufferSizeInBytes);
+            
+            // Use ArraySegment list instead of List<byte>
+            var messageSegments = new List<ArraySegment<byte>>();
+            int totalMessageSize = 0;
 
             try
             {
@@ -87,7 +93,7 @@ namespace Rymote.Pulse.AspNet;
                     try
                     {
                         receiveResult = await connection.Socket.ReceiveAsync(
-                            receiveBufferSegment,
+                            new ArraySegment<byte>(receiveBuffer),
                             CancellationToken.None);
                     }
                     catch (WebSocketException webSocketException)
@@ -114,16 +120,54 @@ namespace Rymote.Pulse.AspNet;
                         break;
                     }
 
-                    messageAccumulator.AddRange(
-                        receiveBuffer.AsSpan(0, receiveResult.Count).ToArray());
+                    if (receiveResult.Count > 0)
+                    {
+                        totalMessageSize += receiveResult.Count;
+                        
+                        if (totalMessageSize > MaxMessageSize)
+                        {
+                            pulseLogger.LogError($"Message size exceeds maximum allowed size of {MaxMessageSize} bytes");
+                            
+                            // Clean up accumulated segments
+                            foreach (var segment in messageSegments)
+                            {
+                                arrayPool.Return(segment.Array!);
+                            }
+                            messageSegments.Clear();
+                            totalMessageSize = 0;
+                            
+                            // Close the connection due to oversized message
+                            await connection.Socket.CloseAsync(
+                                WebSocketCloseStatus.MessageTooBig,
+                                "Message exceeds maximum allowed size",
+                                CancellationToken.None);
+                            break;
+                        }
+                        
+                        // Rent a buffer for this segment
+                        byte[] segmentBuffer = arrayPool.Rent(receiveResult.Count);
+                        Buffer.BlockCopy(receiveBuffer, 0, segmentBuffer, 0, receiveResult.Count);
+                        messageSegments.Add(new ArraySegment<byte>(segmentBuffer, 0, receiveResult.Count));
+                    }
 
                     if (!receiveResult.EndOfMessage)
                     {
                         continue;
                     }
 
-                    byte[] completeMessageBytes = messageAccumulator.ToArray();
-                    messageAccumulator.Clear();
+                    // Combine segments efficiently
+                    byte[] completeMessageBytes = new byte[totalMessageSize];
+                    int offset = 0;
+                    
+                    foreach (var segment in messageSegments)
+                    {
+                        Buffer.BlockCopy(segment.Array!, segment.Offset, completeMessageBytes, offset, segment.Count);
+                        offset += segment.Count;
+                        arrayPool.Return(segment.Array!);
+                    }
+                    
+                    messageSegments.Clear();
+                    totalMessageSize = 0;
 
                     try
                     {
@@ -137,7 +181,7 @@ namespace Rymote.Pulse.AspNet;
                             "Error processing incoming Pulse message",
                             processingException);
 
-                        PulseEnvelope<object> deserializedEnvelope = null;
+                        PulseEnvelope<object>? deserializedEnvelope = null;
                         try
                         {
                             deserializedEnvelope = MsgPackSerdes
@@ -151,7 +195,7 @@ namespace Rymote.Pulse.AspNet;
 
                         if (deserializedEnvelope != null)
                         {
-                            PulseEnvelope<object> errorResponseEnvelope = new PulseEnvelope<object>
+                            PulseEnvelope<object?> errorResponseEnvelope = new PulseEnvelope<object?>
                             {
                                 Id = deserializedEnvelope.Id,
                                 Handle = deserializedEnvelope.Handle,
@@ -186,6 +230,14 @@ namespace Rymote.Pulse.AspNet;
             }
             finally
             {
+                arrayPool.Return(receiveBuffer);
+                
+                // Return any remaining buffers
+                foreach (var segment in messageSegments)
+                {
+                    arrayPool.Return(segment.Array!);
+                }
+                
                 if (connection.Socket.State == WebSocketState.Open)
                 {
                     try
@@ -204,5 +256,15 @@ namespace Rymote.Pulse.AspNet;
                     }
                 }
             }
+        }
+
+        private static int CalculateBufferSize(int lastMessageSize)
+        {
+            const int MinBufferSize = 1024;
+            const int MaxBufferSize = 64 * 1024;
+            
+            // Adaptive sizing based on last message
+            int suggestedSize = Math.Max(MinBufferSize, lastMessageSize);
+            return Math.Min(suggestedSize, MaxBufferSize);
         }
     }
