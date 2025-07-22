@@ -7,9 +7,6 @@ namespace Rymote.Pulse.MediatR;
 
 public static class PulseMediatRExtensions
 {
-    /// <summary>
-    /// Maps a MediatR request handler as a Pulse RPC endpoint
-    /// </summary>
     public static void MapMediatRRequest<TRequest, TResponse>(
         this PulseDispatcher dispatcher,
         string handle,
@@ -21,19 +18,15 @@ public static class PulseMediatRExtensions
             handle,
             async (request, context) =>
             {
-                var (mediator, contextAccessor) = GetServices(context.Connection);
-                
-                // Ensure context is set
+                (IMediator mediator, IPulseContextAccessor contextAccessor) = GetServices(context.Connection);
+
                 contextAccessor.Context = context;
-                
+
                 return await mediator.Send(request);
             },
             version);
     }
 
-    /// <summary>
-    /// Maps a MediatR notification as a Pulse event endpoint
-    /// </summary>
     public static void MapMediatRNotification<TNotification>(
         this PulseDispatcher dispatcher,
         string handle,
@@ -44,19 +37,15 @@ public static class PulseMediatRExtensions
             handle,
             async (notification, context) =>
             {
-                var (mediator, contextAccessor) = GetServices(context.Connection);
-                
-                // Ensure context is set
+                (IMediator mediator, IPulseContextAccessor contextAccessor) = GetServices(context.Connection);
+
                 contextAccessor.Context = context;
-                
+
                 await mediator.Publish(notification);
             },
             version);
     }
 
-    /// <summary>
-    /// Maps a MediatR stream request handler as a Pulse streaming RPC endpoint
-    /// </summary>
     public static void MapMediatRStreamRequest<TRequest, TResponse>(
         this PulseDispatcher dispatcher,
         string handle,
@@ -76,20 +65,14 @@ public static class PulseMediatRExtensions
         where TRequest : class, IStreamRequest<TResponse>, new()
         where TResponse : class, new()
     {
-        var (mediator, contextAccessor) = GetServices(context.Connection);
-        
-        // Ensure context is set
+        (IMediator mediator, IPulseContextAccessor contextAccessor) = GetServices(context.Connection);
+
         contextAccessor.Context = context;
-        
-        await foreach (var response in mediator.CreateStream(request))
-        {
+
+        await foreach (TResponse response in mediator.CreateStream(request))
             yield return response;
-        }
     }
 
-    /// <summary>
-    /// Sends a Pulse event that triggers a MediatR notification
-    /// </summary>
     public static async Task PublishMediatRNotificationAsync<TNotification>(
         this PulseContext context,
         string handle,
@@ -103,12 +86,12 @@ public static class PulseMediatRExtensions
 
     private static (IMediator mediator, IPulseContextAccessor contextAccessor) GetServices(PulseConnection connection)
     {
-        if (!connection.TryGetMetadata<IServiceScope>("__scope", out var scope) || scope == null)
+        if (!connection.TryGetMetadata<IServiceScope>("__scope", out IServiceScope? scope) || scope == null)
             throw new InvalidOperationException("Service scope not found in connection context");
-        
-        var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
-        var contextAccessor = scope.ServiceProvider.GetRequiredService<IPulseContextAccessor>();
-        
+
+        IMediator mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+        IPulseContextAccessor contextAccessor = scope.ServiceProvider.GetRequiredService<IPulseContextAccessor>();
+
         return (mediator, contextAccessor);
     }
-} 
+}

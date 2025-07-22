@@ -14,10 +14,9 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         Action<PulseMediatROptions>? configureOptions = null)
     {
-        var options = new PulseMediatROptions();
+        PulseMediatROptions options = new PulseMediatROptions();
         configureOptions?.Invoke(options);
 
-        // Add MediatR if not already added
         if (!services.Any(x => x.ServiceType == typeof(IMediator)))
         {
             services.AddMediatR(config =>
@@ -26,23 +25,17 @@ public static class ServiceCollectionExtensions
             });
         }
 
-        // Add PulseContext accessor
         services.AddScoped<IPulseContextAccessor, PulseContextAccessor>();
-
-        // Add Pulse middleware that injects IMediator into connections
         services.AddSingleton<IPulseMediatRMiddleware>(sp => new PulseMediatRMiddleware(sp));
 
         return services;
     }
 
-    /// <summary>
-    /// Configures the PulseDispatcher to use MediatR middleware
-    /// </summary>
     public static PulseDispatcher UseMediatR(
         this PulseDispatcher dispatcher,
         IServiceProvider serviceProvider)
     {
-        var middleware = serviceProvider.GetRequiredService<IPulseMediatRMiddleware>();
+        IPulseMediatRMiddleware middleware = serviceProvider.GetRequiredService<IPulseMediatRMiddleware>();
         dispatcher.Use(async (context, next) => await middleware.InjectMediatR(context, next));
         return dispatcher;
     }
@@ -69,14 +62,11 @@ internal class PulseMediatRMiddleware : IPulseMediatRMiddleware
 
     public async Task InjectMediatR(PulseContext context, Func<Task> next)
     {
-        // Create a scoped service provider for this request
-        var scope = _serviceProvider.CreateScope();
-        var contextAccessor = scope.ServiceProvider.GetRequiredService<IPulseContextAccessor>();
+        IServiceScope scope = _serviceProvider.CreateScope();
+        IPulseContextAccessor contextAccessor = scope.ServiceProvider.GetRequiredService<IPulseContextAccessor>();
         
-        // Set the current context
         contextAccessor.Context = context;
         
-        // Store the scope in the connection context
         context.Connection.SetMetadata("__scope", scope);
         
         try
@@ -85,11 +75,9 @@ internal class PulseMediatRMiddleware : IPulseMediatRMiddleware
         }
         finally
         {
-            // Clean up the references
             context.Connection.RemoveMetadata("__scope");
             contextAccessor.Context = null;
             
-            // Dispose the scope
             scope.Dispose();
         }
     }

@@ -37,6 +37,14 @@ jobs:
             --output ./artifacts \
             /p:Version=${{ env.VERSION }}
 
+      - name: Pack Rymote.Pulse.Attributes
+        run: |
+          dotnet pack Rymote.Pulse.MediatR/Rymote.Pulse.Attributes.csproj \
+            --configuration Release \
+            --no-build \
+            --output ./artifacts \
+            /p:Version=${{ env.VERSION }}
+          
       - name: Pack Rymote.Pulse.AspNet
         run: |
           dotnet pack Rymote.Pulse.AspNet/Rymote.Pulse.AspNet.csproj \

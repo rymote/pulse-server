@@ -20,7 +20,7 @@ public class PulseGroup
 
     public Task BroadcastAsync(byte[] payload, CancellationToken cancellationToken = default)
     {
-        var tasks = Members
+        IEnumerable<Task> tasks = Members
             .Where(connection => connection.IsOpen)
             .Select(connection => connection.SendAsync(payload, cancellationToken));
         

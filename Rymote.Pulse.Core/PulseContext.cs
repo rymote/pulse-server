@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Net.WebSockets;
 using Rymote.Pulse.Core.Connections;
 using Rymote.Pulse.Core.Logging;
@@ -16,15 +17,49 @@ public class PulseContext
     public PulseEnvelope<object> UntypedRequest { get; }
     internal Func<byte[], Task>? SendChunkAsync { get; set; }
     public object? TypedResponseEnvelope { get; set; }
+    public Dictionary<string, string> Parameters { get; internal set; }
+
+    public T? GetParameter<T>(string name)
+    {
+        if (Parameters.TryGetValue(name, out string? value))
+        {
+            try
+            {
+                return (T)Convert.ChangeType(value, typeof(T));
+            }
+            catch (InvalidCastException)
+            {
+                return default(T);
+            }
+        }
+        return default(T);
+    }
+
+    public T GetRequiredParameter<T>(string name)
+    {
+        if (Parameters.TryGetValue(name, out string? value))
+        {
+            try
+            {
+                return (T)Convert.ChangeType(value, typeof(T));
+            }
+            catch (InvalidCastException ex)
+            {
+                throw new InvalidOperationException($"Cannot convert parameter '{name}' to type {typeof(T).Name}.", ex);
+            }
+        }
+        throw new KeyNotFoundException($"Required parameter '{name}' not found.");
+    }
 
     public PulseContext(PulseConnectionManager connectionManager, PulseConnection connection, byte[] rawBytes,
-        IPulseLogger logger)
+        IPulseLogger logger, Dictionary<string, string> parameters)
     {
         ConnectionManager = connectionManager;
         Connection = connection;
         Logger = logger;
         RawRequestBytes = rawBytes;
         UntypedRequest = MsgPackSerdes.Deserialize<PulseEnvelope<object>>(rawBytes);
+        Parameters = parameters;
     }
 
     public PulseEnvelope<T> GetTypedRequestEnvelope<T>()

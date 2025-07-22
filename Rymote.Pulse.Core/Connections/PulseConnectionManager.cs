@@ -16,12 +16,14 @@ public class PulseConnectionManager
     private readonly IClusterStore? _clusterStore;
     private readonly string _nodeId;
     private readonly IPulseLogger? _logger;
+    internal PulseDispatcher? _dispatcher;
 
-    public PulseConnectionManager(IClusterStore? clusterStore = null, string? nodeId = null, IPulseLogger? logger = null)
+    public PulseConnectionManager(IClusterStore? clusterStore = null, string? nodeId = null, IPulseLogger? logger = null, PulseDispatcher? dispatcher = null)
     {
         _clusterStore = clusterStore;
         _nodeId = nodeId ?? Environment.MachineName;
         _logger = logger;
+        _dispatcher = dispatcher;
     }
 
     public async Task<PulseConnection> AddConnectionAsync(string connectionId, WebSocket socket)
@@ -32,6 +34,9 @@ public class PulseConnectionManager
         if (_clusterStore != null)
             await _clusterStore.AddConnectionAsync(connectionId, _nodeId);
 
+        if (_dispatcher?.OnConnect != null)
+            await _dispatcher.OnConnect(connection);
+
         return connection;
     }
 
@@ -39,24 +44,18 @@ public class PulseConnectionManager
     {
         _connections.TryRemove(connectionId, out _);
 
-        // Track groups to check for emptiness
-        var groupsToCheck = new List<string>();
+        List<string> groupsToCheck = new List<string>();
         
-        foreach (var kvp in _groups)
+        foreach (KeyValuePair<string, PulseGroup> kvp in _groups)
         {
             kvp.Value.Remove(connectionId);
             if (kvp.Value.IsEmpty)
                 groupsToCheck.Add(kvp.Key);
         }
         
-        // Remove empty groups
-        foreach (var groupName in groupsToCheck)
-        {
-            if (_groups.TryRemove(groupName, out var group) && group.IsEmpty)
-            {
+        foreach (string groupName in groupsToCheck)
+            if (_groups.TryRemove(groupName, out PulseGroup? group) && group.IsEmpty)
                 _logger?.LogInfo($"Removed empty group: {groupName}");
-            }
-        }
 
         if (_clusterStore != null)
             await _clusterStore.RemoveConnectionAsync(connectionId);
@@ -71,13 +70,13 @@ public class PulseConnectionManager
     
     public async Task AddToGroupAsync(string groupName, string connectionId)
     {
-        if (_connections.TryGetValue(connectionId, out var conn))
-            await AddToGroupAsync(groupName, conn);
+        if (_connections.TryGetValue(connectionId, out PulseConnection? connection))
+            await AddToGroupAsync(groupName, connection);
     }
 
     public async Task AddToGroupAsync(string groupName, PulseConnection connection)
     {
-        var group = GetOrCreateGroup(groupName);
+        PulseGroup group = GetOrCreateGroup(groupName);
         group.Add(connection);
 
         if (_clusterStore != null)
@@ -87,16 +86,15 @@ public class PulseConnectionManager
     public async Task RemoveFromGroupAsync(string groupName, string connectionId)
     {
         if (_connections.TryGetValue(connectionId, out PulseConnection? connection))
+        {
             await RemoveFromGroupAsync(groupName, connection);
+        }
         else if (_groups.TryGetValue(groupName, out PulseGroup? group))
         {
             group.Remove(connectionId);
             
-            // Remove empty groups
             if (group.IsEmpty && _groups.TryRemove(groupName, out _))
-            {
                 _logger?.LogInfo($"Removed empty group: {groupName}");
-            }
         }
 
         if (_clusterStore != null)
@@ -105,15 +103,12 @@ public class PulseConnectionManager
 
     public async Task RemoveFromGroupAsync(string groupName, PulseConnection connection)
     {
-        if (_groups.TryGetValue(groupName, out var group))
+        if (_groups.TryGetValue(groupName, out PulseGroup? group))
         {
             group.Remove(connection.ConnectionId);
             
-            // Remove empty groups
             if (group.IsEmpty && _groups.TryRemove(groupName, out _))
-            {
                 _logger?.LogInfo($"Removed empty group: {groupName}");
-            }
         }
 
         if (_clusterStore != null)
@@ -122,12 +117,8 @@ public class PulseConnectionManager
     
     public async Task<IEnumerable<string>> GetAllConnectionIdsAsync()
     {
-        if (_clusterStore != null)
-        {
-            var map = await _clusterStore.GetAllConnectionsAsync();
-            return map.Keys;
-        }
-        
-        return _connections.Keys;
+        if (_clusterStore == null) return _connections.Keys;
+        Dictionary<string, string> map = await _clusterStore.GetAllConnectionsAsync();
+        return map.Keys;
     }
 }

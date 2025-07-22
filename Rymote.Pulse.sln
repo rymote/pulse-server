@@ -6,6 +6,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Rymote.Pulse.AspNet", "Rymo
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Rymote.Pulse.MediatR", "Rymote.Pulse.MediatR\Rymote.Pulse.MediatR.csproj", "{3FE42E04-D10B-48AD-9AFB-2F79DAE2AE05}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Rymote.Pulse.Attributes", "Rymote.Pulse.Attributes\Rymote.Pulse.Attributes.csproj", "{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -52,6 +54,18 @@ Global
 		{3FE42E04-D10B-48AD-9AFB-2F79DAE2AE05}.Release|x64.Build.0 = Release|Any CPU
 		{3FE42E04-D10B-48AD-9AFB-2F79DAE2AE05}.Release|x86.ActiveCfg = Release|Any CPU
 		{3FE42E04-D10B-48AD-9AFB-2F79DAE2AE05}.Release|x86.Build.0 = Release|Any CPU
+		{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}.Debug|x64.Build.0 = Debug|Any CPU
+		{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}.Debug|x86.Build.0 = Debug|Any CPU
+		{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}.Release|x64.ActiveCfg = Release|Any CPU
+		{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}.Release|x64.Build.0 = Release|Any CPU
+		{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}.Release|x86.ActiveCfg = Release|Any CPU
+		{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
