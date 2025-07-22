@@ -45,6 +45,9 @@ public static class PulseProtocolMiddleware
                         await pulseDispatcher.ConnectionManager.AddConnectionAsync(connectionId, webSocketConnection);
                     pulseLogger.LogInfo($"Client connected: {connectionId}");
 
+                    if (pulseDispatcher.OnConnect != null)
+                        await pulseDispatcher.OnConnect(connection);
+                    
                     try
                     {
                         await HandleSocketAsync(

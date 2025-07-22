@@ -16,14 +16,12 @@ public class PulseConnectionManager
     private readonly IClusterStore? _clusterStore;
     private readonly string _nodeId;
     private readonly IPulseLogger? _logger;
-    internal PulseDispatcher? _dispatcher;
 
-    public PulseConnectionManager(IClusterStore? clusterStore = null, string? nodeId = null, IPulseLogger? logger = null, PulseDispatcher? dispatcher = null)
+    public PulseConnectionManager(IClusterStore? clusterStore = null, string? nodeId = null, IPulseLogger? logger = null)
     {
         _clusterStore = clusterStore;
         _nodeId = nodeId ?? Environment.MachineName;
         _logger = logger;
-        _dispatcher = dispatcher;
     }
 
     public async Task<PulseConnection> AddConnectionAsync(string connectionId, WebSocket socket)
@@ -33,9 +31,6 @@ public class PulseConnectionManager
 
         if (_clusterStore != null)
             await _clusterStore.AddConnectionAsync(connectionId, _nodeId);
-
-        if (_dispatcher?.OnConnect != null)
-            await _dispatcher.OnConnect(connection);
 
         return connection;
     }
