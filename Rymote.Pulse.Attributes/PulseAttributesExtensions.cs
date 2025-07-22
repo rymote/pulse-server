@@ -83,7 +83,7 @@ public static class PulseAttributesExtensions
             .GetMethod(nameof(PulseDispatcher.MapRpc))!
             .MakeGenericMethod(requestType, responseType);
         
-        Type delegateType = typeof(Func<,,,>).MakeGenericType(requestType, typeof(PulseContext), typeof(Task<>).MakeGenericType(responseType));
+        Type delegateType = typeof(Func<,,>).MakeGenericType(requestType, typeof(PulseContext), typeof(Task<>).MakeGenericType(responseType));
         Delegate handlerDelegate = Delegate.CreateDelegate(delegateType, handlerInstance, method);
 
         mapRpcMethod.Invoke(pulseDispatcher, new object[] { handle, handlerDelegate, "v1" });
