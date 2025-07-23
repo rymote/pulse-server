@@ -5,7 +5,7 @@ namespace Rymote.Pulse.Core.Connections;
 
 public class PulseConnection
 {
-    private const int MaxMetadataEntries = 100;
+    private const int MAX_METADATA_ENTRIES = 100;
     
     public string ConnectionId { get; }
     public WebSocket Socket { get; }
@@ -33,12 +33,22 @@ public class PulseConnection
             cancellationToken: cancellationToken
         );
     
+    internal async Task DisconnectAsync(
+        WebSocketCloseStatus closeStatus = WebSocketCloseStatus.NormalClosure, 
+        string? statusDescription = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (Socket.State == WebSocketState.Open)
+            await Socket.CloseAsync(
+                closeStatus, 
+                statusDescription ?? "Connection closed by server", 
+                cancellationToken);
+    }
+    
     public void SetMetadata(string key, object value)
     {
-        if (_metadata.Count >= MaxMetadataEntries && !_metadata.ContainsKey(key))
-        {
-            throw new InvalidOperationException($"Maximum metadata entries ({MaxMetadataEntries}) exceeded");
-        }
+        if (_metadata.Count >= MAX_METADATA_ENTRIES && !_metadata.ContainsKey(key))
+            throw new InvalidOperationException($"Maximum metadata entries ({MAX_METADATA_ENTRIES}) exceeded");
         
         _metadata[key] = value;
     }

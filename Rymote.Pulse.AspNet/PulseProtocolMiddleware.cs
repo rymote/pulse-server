@@ -40,13 +40,51 @@ public static class PulseProtocolMiddleware
                     }
 
                     string connectionId = Guid.NewGuid().ToString();
+                    
+                    string ipAddress = GetClientIpAddress(httpContext);
+                    string userAgent = httpContext.Request.Headers["User-Agent"].FirstOrDefault() ?? "Unknown";
+                    string origin = httpContext.Request.Headers["Origin"].FirstOrDefault() ?? "Unknown";
+                    string? protocol = httpContext.Request.Protocol;
+                    
+                    string? forwardedFor = httpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+                    string? realIp = httpContext.Request.Headers["X-Real-IP"].FirstOrDefault();
+                    
                     WebSocket webSocketConnection = await httpContext.WebSockets.AcceptWebSocketAsync();
                     PulseConnection connection =
                         await pulseDispatcher.ConnectionManager.AddConnectionAsync(connectionId, webSocketConnection);
-                    pulseLogger.LogInfo($"Client connected: {connectionId}");
-
+                    
+                    connection.SetMetadata("http_context", httpContext);
+                    connection.SetMetadata("ip_address", ipAddress);
+                    connection.SetMetadata("user_agent", userAgent);
+                    connection.SetMetadata("origin", origin);
+                    connection.SetMetadata("connected_at", DateTime.UtcNow);
+                    
+                    
+                    pulseLogger.LogInfo($"[{connectionId}] Client connected: IP: {ipAddress} | Origin: {origin} | UserAgent: {userAgent}");
+                    
+                    if (!string.IsNullOrEmpty(forwardedFor))
+                    {
+                        pulseLogger.LogInfo($"[{connectionId}] Connection forwarded through: {forwardedFor}");
+                    }
+                    
                     if (pulseDispatcher.OnConnect != null)
-                        await pulseDispatcher.OnConnect(connection);
+                    {
+                        try
+                        {
+                            await pulseDispatcher.OnConnect(connection);
+                        }
+                        catch (Exception exception)
+                        {
+                            pulseLogger.LogError($"[{connectionId}] Error in OnConnect handler", exception);
+                            
+                            await pulseDispatcher.ConnectionManager.DisconnectAsync(
+                                connection,
+                                WebSocketCloseStatus.PolicyViolation,
+                                exception.Message);
+                            
+                            return;
+                        }
+                    }
                     
                     try
                     {
@@ -63,12 +101,27 @@ public static class PulseProtocolMiddleware
                     }
                     finally
                     {
+                        TimeSpan connectedDuration = DateTime.UtcNow - (DateTime)connection.Metadata.GetValueOrDefault("connected_at", DateTime.UtcNow);
                         await pulseDispatcher.ConnectionManager.RemoveConnectionAsync(connectionId);
-                        pulseLogger.LogInfo($"Client disconnected: {connectionId}");
+                        pulseLogger.LogInfo($"[{connectionId}] Client disconnected: IP: {ipAddress} | Duration: {connectedDuration:hh\\\\:mm\\\\:ss}");
                     }
                 });
             }
         );
+    }
+    
+    private static string GetClientIpAddress(HttpContext context)
+    {
+        string? forwardedFor = context.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(forwardedFor))
+            return forwardedFor.Split(',')[0].Trim();
+        
+        
+        string? realIp = context.Request.Headers["X-Real-IP"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(realIp))
+            return realIp;
+        
+        return context.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
     }
 
     private static async Task HandleSocketAsync(

@@ -1,8 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
-
-namespace Rymote.Pulse.Core.Middleware;
+﻿namespace Rymote.Pulse.Core.Middleware;
 
 public class PulseMiddlewarePipeline
 {

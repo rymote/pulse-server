@@ -37,8 +37,8 @@ public class PulseDispatcher : IDisposable
     {
         DateTime cutoffTime = DateTime.UtcNow.AddMinutes(-5);
         List<string> keysToRemove = _inboundStreams
-            .Where(kvp => kvp.Value.LastActivity < cutoffTime)
-            .Select(kvp => kvp.Key)
+            .Where(keyValuePair => keyValuePair.Value.LastActivity < cutoffTime)
+            .Select(keyValuePair => keyValuePair.Key)
             .ToList();
 
         foreach (string key in keysToRemove)
@@ -263,9 +263,9 @@ public class PulseDispatcher : IDisposable
     {
         _cleanupTimer?.Dispose();
         
-        foreach (KeyValuePair<string, (Channel<byte[]> Channel, DateTime LastActivity)> kvp in _inboundStreams)
+        foreach (KeyValuePair<string, (Channel<byte[]> Channel, DateTime LastActivity)> keyValuePair in _inboundStreams)
         {
-            kvp.Value.Channel.Writer.TryComplete();
+            keyValuePair.Value.Channel.Writer.TryComplete();
         }
         _inboundStreams.Clear();
     }

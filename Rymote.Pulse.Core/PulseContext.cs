@@ -19,36 +19,33 @@ public class PulseContext
     public object? TypedResponseEnvelope { get; set; }
     public Dictionary<string, string> Parameters { get; internal set; }
 
-    public T? GetParameter<T>(string name)
+    public TParameter? GetParameter<TParameter>(string name)
     {
-        if (Parameters.TryGetValue(name, out string? value))
+        if (!Parameters.TryGetValue(name, out string? value)) return default(TParameter);
+        
+        try
         {
-            try
-            {
-                return (T)Convert.ChangeType(value, typeof(T));
-            }
-            catch (InvalidCastException)
-            {
-                return default(T);
-            }
+            return (TParameter)Convert.ChangeType(value, typeof(TParameter));
         }
-        return default(T);
+        catch (InvalidCastException)
+        {
+            return default(TParameter);
+        }
     }
 
-    public T GetRequiredParameter<T>(string name)
+    public TParameter GetRequiredParameter<TParameter>(string name)
     {
-        if (Parameters.TryGetValue(name, out string? value))
+        if (!Parameters.TryGetValue(name, out string? value))
+            throw new KeyNotFoundException($"Required parameter '{name}' not found.");
+        
+        try
         {
-            try
-            {
-                return (T)Convert.ChangeType(value, typeof(T));
-            }
-            catch (InvalidCastException ex)
-            {
-                throw new InvalidOperationException($"Cannot convert parameter '{name}' to type {typeof(T).Name}.", ex);
-            }
+            return (TParameter)Convert.ChangeType(value, typeof(TParameter));
         }
-        throw new KeyNotFoundException($"Required parameter '{name}' not found.");
+        catch (InvalidCastException ex)
+        {
+            throw new InvalidOperationException($"Cannot convert parameter '{name}' to type {typeof(TParameter).Name}.", ex);
+        }
     }
 
     public PulseContext(PulseConnectionManager connectionManager, PulseConnection connection, byte[] rawBytes,
@@ -113,25 +110,25 @@ public class PulseContext
         await SendChunkAsync(eosPacked);
     }
 
-    public Task SendEventAsync<T>(
+    public Task SendEventAsync<TPayload>(
         string handle,
-        T data,
+        TPayload data,
         string version = "v1",
         CancellationToken cancellationToken = default
-    ) where T : class, new()
+    ) where TPayload : class, new()
     {
         return SendEventAsync(Connection, handle, data, version, cancellationToken);
     }
 
-    public async Task SendEventAsync<T>(
+    public async Task SendEventAsync<TPayload>(
         PulseConnection connection,
         string handle,
-        T data,
+        TPayload data,
         string version = "v1",
         CancellationToken cancellationToken = default
-    ) where T : class, new()
+    ) where TPayload : class, new()
     {
-        PulseEnvelope<T> envelope = new PulseEnvelope<T>
+        PulseEnvelope<TPayload> envelope = new PulseEnvelope<TPayload>
         {
             Handle = handle,
             Body = data,
@@ -143,15 +140,15 @@ public class PulseContext
         await connection.SendAsync(envelopeBytes, cancellationToken);
     }
     
-    public async Task SendEventAsync<T>(
+    public async Task SendEventAsync<TPayload>(
         PulseGroup group,
         string handle,
-        T data,
+        TPayload data,
         string version = "v1",
         CancellationToken cancellationToken = default
-    ) where T : class, new()
+    ) where TPayload : class, new()
     {
-        PulseEnvelope<T> envelope = new PulseEnvelope<T>
+        PulseEnvelope<TPayload> envelope = new PulseEnvelope<TPayload>
         {
             Handle = handle,
             Body = data,

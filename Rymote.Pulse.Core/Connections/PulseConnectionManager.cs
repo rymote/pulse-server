@@ -41,11 +41,11 @@ public class PulseConnectionManager
 
         List<string> groupsToCheck = new List<string>();
         
-        foreach (KeyValuePair<string, PulseGroup> kvp in _groups)
+        foreach (KeyValuePair<string, PulseGroup> keyValuePair in _groups)
         {
-            kvp.Value.Remove(connectionId);
-            if (kvp.Value.IsEmpty)
-                groupsToCheck.Add(kvp.Key);
+            keyValuePair.Value.Remove(connectionId);
+            if (keyValuePair.Value.IsEmpty)
+                groupsToCheck.Add(keyValuePair.Key);
         }
         
         foreach (string groupName in groupsToCheck)
@@ -57,11 +57,42 @@ public class PulseConnectionManager
     }
 
     public PulseConnection? GetConnection(string connectionId)
-        => _connections.TryGetValue(connectionId, out PulseConnection? connection) ? connection : null;
+        => _connections.GetValueOrDefault(connectionId);
 
     public PulseGroup GetOrCreateGroup(string groupName)
         => _groups.GetOrAdd(groupName, _ => new PulseGroup(groupName));
     
+    public async Task DisconnectAsync(
+        string connectionId, 
+        WebSocketCloseStatus closeStatus = WebSocketCloseStatus.NormalClosure,
+        string? statusDescription = null,
+        CancellationToken cancellationToken = default)
+    {
+        PulseConnection? connection = GetConnection(connectionId);
+        
+        if (connection != null)
+            await DisconnectAsync(connection, closeStatus, statusDescription, cancellationToken);
+    }
+    
+    public async Task DisconnectAsync(
+        PulseConnection connection,
+        WebSocketCloseStatus closeStatus = WebSocketCloseStatus.NormalClosure,
+        string? statusDescription = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await connection.DisconnectAsync(closeStatus, statusDescription, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            _logger?.LogError($"Error disconnecting connection {connection.ConnectionId}", exception);
+        }
+        finally
+        {
+            await RemoveConnectionAsync(connection.ConnectionId);
+        }
+    }
     
     public async Task AddToGroupAsync(string groupName, string connectionId)
     {
