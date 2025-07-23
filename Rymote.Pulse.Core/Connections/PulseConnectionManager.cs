@@ -24,9 +24,9 @@ public class PulseConnectionManager
         _logger = logger;
     }
 
-    public async Task<PulseConnection> AddConnectionAsync(string connectionId, WebSocket socket)
+    public async Task<PulseConnection> AddConnectionAsync(string connectionId, WebSocket socket, IDictionary<string, string>? queryParameters = null)
     {
-        PulseConnection connection = new PulseConnection(connectionId, socket, _nodeId);
+        PulseConnection connection = new PulseConnection(connectionId, socket, _nodeId, queryParameters);
         _connections[connectionId] = connection;
 
         if (_clusterStore != null)

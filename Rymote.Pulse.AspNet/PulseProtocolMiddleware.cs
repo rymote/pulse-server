@@ -49,16 +49,20 @@ public static class PulseProtocolMiddleware
                     string? forwardedFor = httpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault();
                     string? realIp = httpContext.Request.Headers["X-Real-IP"].FirstOrDefault();
                     
+                    var queryParameters = httpContext.Request.Query
+                        .ToDictionary(
+                            keyValuePair => keyValuePair.Key, 
+                            keyValuePair => keyValuePair.Value.ToString());
+                    
                     WebSocket webSocketConnection = await httpContext.WebSockets.AcceptWebSocketAsync();
                     PulseConnection connection =
-                        await pulseDispatcher.ConnectionManager.AddConnectionAsync(connectionId, webSocketConnection);
+                        await pulseDispatcher.ConnectionManager.AddConnectionAsync(connectionId, webSocketConnection, queryParameters);
                     
                     connection.SetMetadata("http_context", httpContext);
                     connection.SetMetadata("ip_address", ipAddress);
                     connection.SetMetadata("user_agent", userAgent);
                     connection.SetMetadata("origin", origin);
                     connection.SetMetadata("connected_at", DateTime.UtcNow);
-                    
                     
                     pulseLogger.LogInfo($"[{connectionId}] Client connected: IP: {ipAddress} | Origin: {origin} | UserAgent: {userAgent}");
                     

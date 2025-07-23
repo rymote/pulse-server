@@ -13,14 +13,20 @@ public class PulseConnection
 
     private readonly ConcurrentDictionary<string, object> _metadata 
         = new ConcurrentDictionary<string, object>();
-
     public IReadOnlyDictionary<string, object> Metadata => _metadata;
     
-    public PulseConnection(string connectionId, WebSocket socket, string nodeId)
+    private readonly IReadOnlyDictionary<string, string> _queryParameters;
+    public IReadOnlyDictionary<string, string> QueryParameters => _queryParameters;
+    
+    public PulseConnection(string connectionId, WebSocket socket, string nodeId, IDictionary<string, string>? queryParameters = null)
     {
         ConnectionId = connectionId;
         Socket = socket;
         NodeId = nodeId;
+        
+        _queryParameters = queryParameters != null 
+            ? new Dictionary<string, string>(queryParameters) 
+            : new Dictionary<string, string>();
     }
 
     public bool IsOpen => Socket.State == WebSocketState.Open;
@@ -53,9 +59,9 @@ public class PulseConnection
         _metadata[key] = value;
     }
 
-    public bool TryGetMetadata<T>(string key, out T? value)
+    public bool TryGetMetadata<TMetadataValue>(string key, out TMetadataValue? value)
     {
-        if (_metadata.TryGetValue(key, out object? obj) && obj is T cast)
+        if (_metadata.TryGetValue(key, out object? obj) && obj is TMetadataValue cast)
         {
             value = cast;
             return true;
@@ -66,4 +72,15 @@ public class PulseConnection
     }
 
     public bool RemoveMetadata(string key) => _metadata.TryRemove(key, out _);
+    
+    
+    public string? GetQueryParameter(string key)
+    {
+        return _queryParameters.TryGetValue(key, out string? value) ? value : null;
+    }
+    
+    public bool TryGetQueryParameter(string key, out string? value)
+    {
+        return _queryParameters.TryGetValue(key, out value);
+    }
 }
