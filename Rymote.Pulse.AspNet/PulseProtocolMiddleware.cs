@@ -49,7 +49,7 @@ public static class PulseProtocolMiddleware
                     string? forwardedFor = httpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault();
                     string? realIp = httpContext.Request.Headers["X-Real-IP"].FirstOrDefault();
                     
-                    var queryParameters = httpContext.Request.Query
+                    Dictionary<string, string> queryParameters = httpContext.Request.Query
                         .ToDictionary(
                             keyValuePair => keyValuePair.Key, 
                             keyValuePair => keyValuePair.Value.ToString());

@@ -55,6 +55,31 @@ public class PulseDispatcher : IDisposable
         _pipeline.Use(middleware);
     }
 
+    public void MapRpc<TResponse>(
+        string handle,
+        Func<PulseContext, Task<TResponse>> handlerFunc,
+        string version = "v1")
+        where TResponse : class, new()
+    {
+        _handlers.Add((new HandlePattern(handle), version.ToLowerInvariant(), async context =>
+        {
+            TResponse responseBody = await handlerFunc(context);
+            
+            PulseEnvelope<TResponse> responseEnvelope = new PulseEnvelope<TResponse>
+            {
+                Handle = context.UntypedRequest.Handle,
+                Body = responseBody,
+                AuthToken = context.UntypedRequest.AuthToken,
+                Kind = PulseKind.RPC,
+                Version = context.UntypedRequest.Version,
+                ClientCorrelationId = context.UntypedRequest.ClientCorrelationId,
+                Status = PulseStatus.OK
+            };
+            
+            context.TypedResponseEnvelope = responseEnvelope;
+        }));
+    }
+    
     public void MapRpc<TRequest, TResponse>(
         string handle,
         Func<TRequest, PulseContext, Task<TResponse>> handlerFunc,
@@ -153,6 +178,18 @@ public class PulseDispatcher : IDisposable
                 await handlerFunc(chunks, context);
             }
 
+            context.TypedResponseEnvelope = null;
+        }));
+    }
+
+    public void MapEvent(
+        string handle,
+        Func<PulseContext, Task> handlerFunc,
+        string version = "v1")
+    {
+        _handlers.Add((new HandlePattern(handle), version.ToLowerInvariant(), async context =>
+        {
+            await handlerFunc(context);
             context.TypedResponseEnvelope = null;
         }));
     }

@@ -37,28 +37,38 @@ public static class PulseAttributesExtensions
     private static void RegisterEventHandler(PulseDispatcher pulseDispatcher, MethodInfo method, object? handlerInstance)
     {
         if (handlerInstance == null) return;
-        
+    
         PulseEventAttribute? attribute = method.GetCustomAttribute<PulseEventAttribute>();
         if (attribute == null) return;
-        
-        var parameters = method.GetParameters();
-        if (parameters.Length != 2) return;
-        
-        Type payloadType = parameters[0].ParameterType;
-        Type contextType =  parameters[1].ParameterType;
-
-        if (contextType != typeof(PulseContext) || method.ReturnType != typeof(Task)) return;
-
+    
+        ParameterInfo[] parameters = method.GetParameters();
+        if (method.ReturnType != typeof(Task)) return;
+    
         string handle = attribute.Handle ?? method.Name;
+    
+        if (parameters.Length == 1 && parameters[0].ParameterType == typeof(PulseContext))
+        {
+            MethodInfo mapEventMethod = typeof(PulseDispatcher)
+                .GetMethod(nameof(PulseDispatcher.MapEvent), new[] { typeof(string), typeof(Func<PulseContext, Task>), typeof(string) })!;
         
-        MethodInfo mapEventMethod = typeof(PulseDispatcher)
-            .GetMethod(nameof(PulseDispatcher.MapEvent))!
-            .MakeGenericMethod(payloadType);
-        
-        Type delegateType = typeof(Func<,,>).MakeGenericType(payloadType, typeof(PulseContext), typeof(Task));
-        Delegate handlerDelegate = Delegate.CreateDelegate(delegateType, handlerInstance, method);
+            Type delegateType = typeof(Func<,>).MakeGenericType(typeof(PulseContext), typeof(Task));
+            Delegate handlerDelegate = Delegate.CreateDelegate(delegateType, handlerInstance, method);
 
-        mapEventMethod.Invoke(pulseDispatcher, new object[] { handle, handlerDelegate, "v1" });
+            mapEventMethod.Invoke(pulseDispatcher, new object[] { handle, handlerDelegate, "v1" });
+        }
+        else if (parameters.Length == 2 && parameters[1].ParameterType == typeof(PulseContext))
+        {
+            Type payloadType = parameters[0].ParameterType;
+        
+            MethodInfo mapEventMethod = typeof(PulseDispatcher)
+                .GetMethod(nameof(PulseDispatcher.MapEvent))!
+                .MakeGenericMethod(payloadType);
+        
+            Type delegateType = typeof(Func<,,>).MakeGenericType(payloadType, typeof(PulseContext), typeof(Task));
+            Delegate handlerDelegate = Delegate.CreateDelegate(delegateType, handlerInstance, method);
+
+            mapEventMethod.Invoke(pulseDispatcher, new object[] { handle, handlerDelegate, "v1" });
+        }
     }
     
     private static void RegisterRpcHandler(PulseDispatcher pulseDispatcher, MethodInfo method, object? handlerInstance)
@@ -68,24 +78,37 @@ public static class PulseAttributesExtensions
         PulseRpcAttribute? attribute = method.GetCustomAttribute<PulseRpcAttribute>();
         if (attribute == null) return;
         
-        var parameters = method.GetParameters();
-        if (parameters.Length != 2) return;
+        ParameterInfo[] parameters = method.GetParameters();
+        if (!method.ReturnType.IsGenericType || method.ReturnType.GetGenericTypeDefinition() != typeof(Task<>)) return;
         
-        Type requestType = parameters[0].ParameterType;
-        Type contextType =  parameters[1].ParameterType;
-
-        if (contextType != typeof(PulseContext) || method.ReturnType.GetGenericTypeDefinition() != typeof(Task<>)) return;
-
         Type responseType = method.ReturnType.GetGenericArguments()[0];
         string handle = attribute.Handle ?? method.Name;
         
-        MethodInfo mapRpcMethod = typeof(PulseDispatcher)
-            .GetMethod(nameof(PulseDispatcher.MapRpc))!
-            .MakeGenericMethod(requestType, responseType);
-        
-        Type delegateType = typeof(Func<,,>).MakeGenericType(requestType, typeof(PulseContext), typeof(Task<>).MakeGenericType(responseType));
-        Delegate handlerDelegate = Delegate.CreateDelegate(delegateType, handlerInstance, method);
+        if (parameters.Length == 1 && parameters[0].ParameterType == typeof(PulseContext))
+        {
+            MethodInfo mapRpcMethod = typeof(PulseDispatcher)
+                .GetMethods()
+                .Where(methodInfo => methodInfo.Name == nameof(PulseDispatcher.MapRpc) && methodInfo.GetGenericArguments().Length == 1)
+                .Single()
+                .MakeGenericMethod(responseType);
+            
+            Type delegateType = typeof(Func<,>).MakeGenericType(typeof(PulseContext), typeof(Task<>).MakeGenericType(responseType));
+            Delegate handlerDelegate = Delegate.CreateDelegate(delegateType, handlerInstance, method);
 
-        mapRpcMethod.Invoke(pulseDispatcher, new object[] { handle, handlerDelegate, "v1" });
+            mapRpcMethod.Invoke(pulseDispatcher, new object[] { handle, handlerDelegate, "v1" });
+        }
+        else if (parameters.Length == 2 && parameters[1].ParameterType == typeof(PulseContext))
+        {
+            Type requestType = parameters[0].ParameterType;
+            
+            MethodInfo mapRpcMethod = typeof(PulseDispatcher)
+                .GetMethod(nameof(PulseDispatcher.MapRpc))!
+                .MakeGenericMethod(requestType, responseType);
+            
+            Type delegateType = typeof(Func<,,>).MakeGenericType(requestType, typeof(PulseContext), typeof(Task<>).MakeGenericType(responseType));
+            Delegate handlerDelegate = Delegate.CreateDelegate(delegateType, handlerInstance, method);
+
+            mapRpcMethod.Invoke(pulseDispatcher, new object[] { handle, handlerDelegate, "v1" });
+        }
     }
 }
