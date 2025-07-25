@@ -1,4 +1,7 @@
-﻿using System.Reflection;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using MessagePack;
 using MessagePack.Formatters;
 using MessagePack.Resolvers;
@@ -8,7 +11,6 @@ namespace Rymote.Pulse.Core.Serialization;
 public sealed class CamelCaseContractlessResolver : IFormatterResolver
 {
     public static readonly IFormatterResolver Instance = new CamelCaseContractlessResolver();
-
     private CamelCaseContractlessResolver() { }
 
     public IMessagePackFormatter<T>? GetFormatter<T>() => FormatterCache<T>.Formatter;
@@ -37,6 +39,8 @@ public sealed class CamelCaseContractlessResolver : IFormatterResolver
     private sealed class CamelCaseObjectFormatter<T> : IMessagePackFormatter<T>
     {
         private readonly PropertyHandler[] _propertyHandlers;
+        private readonly Dictionary<string, PropertyHandler> _lookupString;
+        private readonly Dictionary<int, PropertyHandler> _lookupInteger;
         private readonly Func<T> _constructorDelegate;
 
         public CamelCaseObjectFormatter()
@@ -47,17 +51,33 @@ public sealed class CamelCaseContractlessResolver : IFormatterResolver
                 .Where(propertyInfo => propertyInfo is { CanRead: true, CanWrite: true })
                 .Select(CreateHandler)
                 .ToArray();
+
+            _lookupString = _propertyHandlers
+                .Where(handler => handler.IntegerKey is null)
+                .ToDictionary(handler => handler.StringKey, handler => handler, StringComparer.Ordinal);
+
+            _lookupInteger = _propertyHandlers
+                .Where(handler => handler.IntegerKey is not null)
+                .ToDictionary(handler => handler.IntegerKey!.Value, handler => handler);
         }
 
         public void Serialize(ref MessagePackWriter writer, T value, MessagePackSerializerOptions options)
         {
-            if (value is null) { writer.WriteNil(); return; }
+            if (value == null)
+            {
+                writer.WriteNil();
+                return;
+            }
 
             writer.WriteMapHeader(_propertyHandlers.Length);
 
             foreach (PropertyHandler handler in _propertyHandlers)
             {
-                writer.Write(handler.CamelCaseName);
+                if (handler.IntegerKey is int integerKey)
+                    writer.Write(integerKey);
+                else
+                    writer.Write(handler.StringKey);
+
                 handler.Serialize(ref writer, handler.Getter(value), options);
             }
         }
@@ -67,16 +87,36 @@ public sealed class CamelCaseContractlessResolver : IFormatterResolver
             if (reader.TryReadNil()) return default!;
 
             T instance = _constructorDelegate();
-            int count = reader.ReadMapHeader();
+            int mapCount = reader.ReadMapHeader();
 
-            for (int index = 0; index < count; index++)
+            for (int index = 0; index < mapCount; index++)
             {
-                string? key = reader.ReadString();
-                PropertyHandler? handler = _propertyHandlers.FirstOrDefault(propertyHandler => propertyHandler.CamelCaseName == key);
-                if (handler is null) { reader.Skip(); continue; }
+                PropertyHandler? handler = null;
+                switch (reader.NextMessagePackType)
+                {
+                    case MessagePackType.Integer:
+                        if (_lookupInteger.TryGetValue(reader.ReadInt32(), out PropertyHandler intHandler))
+                            handler = intHandler;
+                        else
+                            reader.Skip();
+                        break;
+
+                    case MessagePackType.String:
+                        if (_lookupString.TryGetValue(reader.ReadString(), out PropertyHandler strHandler))
+                            handler = strHandler;
+                        else
+                            reader.Skip();
+                        break;
+
+                    default:
+                        reader.Skip();
+                        break;
+                }
+
+                if (handler is null) continue;
 
                 object? propertyValue = handler.Deserialize(ref reader, options);
-                if (instance != null) handler.Setter(instance, propertyValue);
+                handler.Setter(instance, propertyValue);
             }
 
             return instance;
@@ -84,43 +124,53 @@ public sealed class CamelCaseContractlessResolver : IFormatterResolver
 
         private static PropertyHandler CreateHandler(PropertyInfo propertyInfo)
         {
-            Type propertyType = propertyInfo.PropertyType;
-            string camelCase = Char.ToLowerInvariant(propertyInfo.Name[0]) + propertyInfo.Name.Substring(1);
+            KeyAttribute? keyAttribute = propertyInfo.GetCustomAttribute<KeyAttribute>();
+            int? integerKey = keyAttribute?.IntKey is >= 0 ? keyAttribute.IntKey : null;
+            string stringKey = keyAttribute?.StringKey ?? ConvertToCamelCase(propertyInfo.Name);
 
             MethodInfo getMethod = propertyInfo.GetGetMethod()!;
             MethodInfo setMethod = propertyInfo.GetSetMethod()!;
-            Func<T, object?> getter = (Func<T, object?>)Delegate.CreateDelegate(typeof(Func<T, object?>), null, getMethod);
-            Action<T, object?> setter = (Action<T, object?>)Delegate.CreateDelegate(typeof(Action<T, object?>), null, setMethod);
+            Func<T, object?> getterDelegate = (Func<T, object?>)Delegate.CreateDelegate(typeof(Func<T, object?>), null, getMethod);
+            Action<T, object?> setterDelegate = (Action<T, object?>)Delegate.CreateDelegate(typeof(Action<T, object?>), null, setMethod);
 
-            IMessagePackFormatter<object?> untypedFormatter = GetUntypedFormatter(propertyType);
-            
+            IMessagePackFormatter<object?> untypedFormatter = GetUntypedFormatter(propertyInfo.PropertyType);
+
             return new PropertyHandler(
-                camelCase,
-                value => getter((T)value),
-                (obj, value) => setter((T)obj, value),
+                stringKey,
+                integerKey,
+                obj => getterDelegate((T)obj),
+                (obj, value) => setterDelegate((T)obj, value),
                 (ref MessagePackWriter writer, object? value, MessagePackSerializerOptions options) => untypedFormatter.Serialize(ref writer, value, options),
                 (ref MessagePackReader reader, MessagePackSerializerOptions options) => untypedFormatter.Deserialize(ref reader, options));
         }
 
-        private static IMessagePackFormatter<object?> GetUntypedFormatter(Type t)
+        private static IMessagePackFormatter<object?> GetUntypedFormatter(Type propertyType)
         {
-            MethodInfo generic = typeof(CamelCaseObjectFormatter<T>)
+            MethodInfo genericMethod = typeof(CamelCaseObjectFormatter<T>)
                 .GetMethod(nameof(GetFormatterGeneric), BindingFlags.NonPublic | BindingFlags.Static)!;
 
-            MethodInfo closed = generic.MakeGenericMethod(t);
-            return (IMessagePackFormatter<object?>)closed.Invoke(null, null)!;
+            MethodInfo closedMethod = genericMethod.MakeGenericMethod(propertyType);
+            return (IMessagePackFormatter<object?>)closedMethod.Invoke(null, null)!;
         }
-        
-        private static IMessagePackFormatter<object?> GetFormatterGeneric<TProp>()
-        {
-            IMessagePackFormatter<TProp> typed =
-                ContractlessStandardResolver.Instance.GetFormatterWithVerify<TProp>();
 
-            return new BoxedFormatter<TProp>(typed);
+        private static IMessagePackFormatter<object?> GetFormatterGeneric<TProperty>()
+        {
+            IMessagePackFormatter<TProperty> typedFormatter =
+                ContractlessStandardResolver.Instance.GetFormatterWithVerify<TProperty>();
+
+            return new BoxedFormatter<TProperty>(typedFormatter);
         }
-        
+
+        private static string ConvertToCamelCase(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return name;
+            if (name.Length == 1) return name.ToLowerInvariant();
+            return char.ToLowerInvariant(name[0]) + name.Substring(1);
+        }
+
         private sealed record PropertyHandler(
-            string CamelCaseName,
+            string StringKey,
+            int? IntegerKey,
             Func<object, object?> Getter,
             Action<object, object?> Setter,
             ActionRefWriter Serialize,
@@ -129,18 +179,14 @@ public sealed class CamelCaseContractlessResolver : IFormatterResolver
         private delegate void ActionRefWriter(ref MessagePackWriter writer, object? value, MessagePackSerializerOptions options);
         private delegate object? FuncRefReader(ref MessagePackReader reader, MessagePackSerializerOptions options);
 
-        internal sealed class BoxedFormatter<TBox> : IMessagePackFormatter<object?>
+        private sealed class BoxedFormatter<TBox> : IMessagePackFormatter<object?>
         {
             private readonly IMessagePackFormatter<TBox> _innerFormatter;
-
             public BoxedFormatter(IMessagePackFormatter<TBox> inner) => _innerFormatter = inner;
-
             public void Serialize(ref MessagePackWriter writer, object? value, MessagePackSerializerOptions options) =>
                 _innerFormatter.Serialize(ref writer, value is null ? default! : (TBox)value, options);
-
             public object? Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options) =>
                 _innerFormatter.Deserialize(ref reader, options);
         }
     }
-
 }
