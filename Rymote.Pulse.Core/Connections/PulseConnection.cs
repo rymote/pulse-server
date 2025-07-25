@@ -36,7 +36,7 @@ public class PulseConnection : IDisposable
         TPayload data,
         string version = "v1",
         CancellationToken cancellationToken = default
-    ) where TPayload : class, new()
+    ) 
     {
         PulseEnvelope<TPayload> envelope = new PulseEnvelope<TPayload>
         {

@@ -15,6 +15,14 @@ public static class MsgPackSerdes
         MessagePackSerializerOptions.Standard
             .WithCompression(MessagePackCompression.None)
             .WithResolver(CompositeResolver.Create(
+                BuiltinResolver.Instance,
+                AttributeFormatterResolver.Instance,
+                
+                DynamicEnumAsStringResolver.Instance,
+                DynamicGenericResolver.Instance,
+                DynamicUnionResolver.Instance,
+                DynamicObjectResolver.Instance,
+                
                 GeneratedMessagePackResolver.Instance,
                 ContractlessStandardResolver.Instance
             ));

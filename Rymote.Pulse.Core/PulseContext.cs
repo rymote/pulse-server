@@ -116,7 +116,7 @@ public class PulseContext
         TPayload data,
         string version = "v1",
         CancellationToken cancellationToken = default
-    ) where TPayload : class, new()
+    )
     {
         return Connection.SendEventAsync(handle, data, version, cancellationToken);
     }
@@ -127,7 +127,7 @@ public class PulseContext
         TPayload data,
         string version = "v1",
         CancellationToken cancellationToken = default
-    ) where TPayload : class, new()
+    )
     {
         return connection.SendEventAsync(handle, data, version, cancellationToken);
     }
@@ -138,7 +138,7 @@ public class PulseContext
         TPayload data,
         string version = "v1",
         CancellationToken cancellationToken = default
-    ) where TPayload : class, new()
+    )
     {
         return group.SendEventAsync(handle, data, version, cancellationToken);
     }
