@@ -16,9 +16,9 @@ public static class MsgPackSerdes
             .WithCompression(MessagePackCompression.None)
             .WithResolver(CompositeResolver.Create(
                 AttributeFormatterResolver.Instance,
-                CamelCaseContractlessResolver.Instance,
-                BuiltinResolver.Instance,
                 GeneratedMessagePackResolver.Instance,
+                BuiltinResolver.Instance,
+                CamelCaseContractlessResolver.Instance,
                 DynamicEnumAsStringResolver.Instance,
                 DynamicGenericResolver.Instance,
                 DynamicUnionResolver.Instance,
