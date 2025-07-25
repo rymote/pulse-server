@@ -1,5 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Collections.Immutable;
+using Rymote.Pulse.Core.Messages;
+using Rymote.Pulse.Core.Serialization;
 
 namespace Rymote.Pulse.Core.Connections;
 
@@ -142,6 +144,44 @@ public class PulseGroup : IDisposable
 
     public bool Contains(PulseConnection connection) => Contains(connection.ConnectionId);
 
+    public async Task SendEventAsync<TPayload>(
+        string handle,
+        TPayload data,
+        string version = "v1",
+        CancellationToken cancellationToken = default
+    ) where TPayload : class, new()
+    {
+        PulseEnvelope<TPayload> envelope = new PulseEnvelope<TPayload>
+        {
+            Handle = handle,
+            Body = data,
+            Kind = PulseKind.EVENT,
+            Version = version
+        };
+
+        byte[] envelopeBytes = MsgPackSerdes.Serialize(envelope);
+        await BroadcastAsync(envelopeBytes, cancellationToken);
+    }
+
+    public async Task SendEventAsync(
+        string handle,
+        object data,
+        string version = "v1",
+        CancellationToken cancellationToken = default
+    )
+    {
+        PulseEnvelope<object> envelope = new PulseEnvelope<object>
+        {
+            Handle = handle,
+            Body = data,
+            Kind = PulseKind.EVENT,
+            Version = version
+        };
+
+        byte[] envelopeBytes = MsgPackSerdes.Serialize(envelope);
+        await BroadcastAsync(envelopeBytes, cancellationToken);
+    }
+    
     public async Task BroadcastAsync(byte[] payload, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();

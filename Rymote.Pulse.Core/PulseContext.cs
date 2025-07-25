@@ -22,7 +22,7 @@ public class PulseContext
     public TParameter? GetParameter<TParameter>(string name)
     {
         if (!Parameters.TryGetValue(name, out string? value)) return default(TParameter);
-        
+
         try
         {
             return (TParameter)Convert.ChangeType(value, typeof(TParameter));
@@ -37,14 +37,15 @@ public class PulseContext
     {
         if (!Parameters.TryGetValue(name, out string? value))
             throw new KeyNotFoundException($"Required parameter '{name}' not found.");
-        
+
         try
         {
             return (TParameter)Convert.ChangeType(value, typeof(TParameter));
         }
         catch (InvalidCastException ex)
         {
-            throw new InvalidOperationException($"Cannot convert parameter '{name}' to type {typeof(TParameter).Name}.", ex);
+            throw new InvalidOperationException($"Cannot convert parameter '{name}' to type {typeof(TParameter).Name}.",
+                ex);
         }
     }
 
@@ -117,10 +118,10 @@ public class PulseContext
         CancellationToken cancellationToken = default
     ) where TPayload : class, new()
     {
-        return SendEventAsync(Connection, handle, data, version, cancellationToken);
+        return Connection.SendEventAsync(handle, data, version, cancellationToken);
     }
 
-    public async Task SendEventAsync<TPayload>(
+    public Task SendEventAsync<TPayload>(
         PulseConnection connection,
         string handle,
         TPayload data,
@@ -128,19 +129,10 @@ public class PulseContext
         CancellationToken cancellationToken = default
     ) where TPayload : class, new()
     {
-        PulseEnvelope<TPayload> envelope = new PulseEnvelope<TPayload>
-        {
-            Handle = handle,
-            Body = data,
-            Kind = PulseKind.EVENT,
-            Version = version
-        };
-
-        byte[] envelopeBytes = MsgPackSerdes.Serialize(envelope);
-        await connection.SendAsync(envelopeBytes, cancellationToken);
+        return connection.SendEventAsync(handle, data, version, cancellationToken);
     }
-    
-    public async Task SendEventAsync<TPayload>(
+
+    public Task SendEventAsync<TPayload>(
         PulseGroup group,
         string handle,
         TPayload data,
@@ -148,15 +140,6 @@ public class PulseContext
         CancellationToken cancellationToken = default
     ) where TPayload : class, new()
     {
-        PulseEnvelope<TPayload> envelope = new PulseEnvelope<TPayload>
-        {
-            Handle = handle,
-            Body = data,
-            Kind = PulseKind.EVENT,
-            Version = version
-        };
-
-        byte[] envelopeBytes = MsgPackSerdes.Serialize(envelope);
-        await group.BroadcastAsync(envelopeBytes, cancellationToken);
+        return group.SendEventAsync(handle, data, version, cancellationToken);
     }
 }

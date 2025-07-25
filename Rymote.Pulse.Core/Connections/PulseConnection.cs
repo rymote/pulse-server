@@ -1,6 +1,8 @@
 ﻿using System.Collections.Concurrent;
 using System.Net.WebSockets;
+using Rymote.Pulse.Core.Messages;
 using Rymote.Pulse.Core.Metadata;
+using Rymote.Pulse.Core.Serialization;
 
 namespace Rymote.Pulse.Core.Connections;
 
@@ -28,6 +30,45 @@ public class PulseConnection : IDisposable
 
     public bool IsOpen => Socket.State == WebSocketState.Open;
 
+    
+    public async Task SendEventAsync<TPayload>(
+        string handle,
+        TPayload data,
+        string version = "v1",
+        CancellationToken cancellationToken = default
+    ) where TPayload : class, new()
+    {
+        PulseEnvelope<TPayload> envelope = new PulseEnvelope<TPayload>
+        {
+            Handle = handle,
+            Body = data,
+            Kind = PulseKind.EVENT,
+            Version = version
+        };
+
+        byte[] envelopeBytes = MsgPackSerdes.Serialize(envelope);
+        await SendAsync(envelopeBytes, cancellationToken);
+    }
+
+    public async Task SendEventAsync(
+        string handle,
+        object data,
+        string version = "v1",
+        CancellationToken cancellationToken = default
+    )
+    {
+        PulseEnvelope<object> envelope = new PulseEnvelope<object>
+        {
+            Handle = handle,
+            Body = data,
+            Kind = PulseKind.EVENT,
+            Version = version
+        };
+
+        byte[] envelopeBytes = MsgPackSerdes.Serialize(envelope);
+        await SendAsync(envelopeBytes, cancellationToken);
+    }
+    
     public Task SendAsync(byte[] payload, CancellationToken cancellationToken = default)
         => Socket.SendAsync(
             new ArraySegment<byte>(payload),
