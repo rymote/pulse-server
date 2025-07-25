@@ -15,6 +15,7 @@ public static class MsgPackSerdes
         MessagePackSerializerOptions.Standard
             .WithCompression(MessagePackCompression.None)
             .WithResolver(CompositeResolver.Create(
+                CamelCaseContractlessResolver.Instance,
                 AttributeFormatterResolver.Instance,
                 BuiltinResolver.Instance,
                 GeneratedMessagePackResolver.Instance,
@@ -34,7 +35,7 @@ public static class MsgPackSerdes
 
     static MsgPackSerdes()
     {
-        for (int i = 0; i < BUFFER_WRITER_POOL_SIZE; i++)
+        for (int index = 0; index < BUFFER_WRITER_POOL_SIZE; index++)
         {
             _randomNumberGeneratorPool.Enqueue(RandomNumberGenerator.Create());
             _bufferWriterPool.Enqueue(new ArrayBufferWriter<byte>());

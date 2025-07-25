@@ -198,8 +198,8 @@ public static class PulseProtocolMiddleware
                     {
                         pulseLogger.LogError($"Message size exceeds maximum allowed size of {MaxMessageSize} bytes");
 
-                        for (int i = 0; i < segmentCount; i++)
-                            arrayPool.Return(messageSegments[i].Array!);
+                        for (int index = 0; index < segmentCount; index++)
+                            arrayPool.Return(messageSegments[index].Array!);
 
                         segmentCount = 0;
                         totalMessageSize = 0;
@@ -247,9 +247,9 @@ public static class PulseProtocolMiddleware
                     else if (segmentCount > 1)
                     {
                         int offset = 0;
-                        for (int i = 0; i < segmentCount; i++)
+                        for (int index = 0; index < segmentCount; index++)
                         {
-                            ArraySegment<byte> segment = messageSegments[i];
+                            ArraySegment<byte> segment = messageSegments[index];
                             Buffer.BlockCopy(segment.Array!, segment.Offset, messageAssemblyBuffer, offset,
                                 segment.Count);
                             offset += segment.Count;
@@ -271,8 +271,8 @@ public static class PulseProtocolMiddleware
                         "Error processing incoming Pulse message",
                         processingException);
 
-                    for (int i = 0; i < segmentCount; i++)
-                        arrayPool.Return(messageSegments[i].Array!);
+                    for (int index = 0; index < segmentCount; index++)
+                        arrayPool.Return(messageSegments[index].Array!);
 
                     segmentCount = 0;
                     totalMessageSize = 0;
@@ -294,8 +294,8 @@ public static class PulseProtocolMiddleware
             arrayPool.Return(receiveBuffer);
             arrayPool.Return(messageAssemblyBuffer);
 
-            for (int i = 0; i < segmentCount; i++)
-                arrayPool.Return(messageSegments[i].Array!);
+            for (int index = 0; index < segmentCount; index++)
+                arrayPool.Return(messageSegments[index].Array!);
 
             if (connection.IsOpen)
             {

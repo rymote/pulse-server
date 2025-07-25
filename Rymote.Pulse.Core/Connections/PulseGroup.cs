@@ -195,10 +195,10 @@ public class PulseGroup : IDisposable
         ConcurrentBag<string> failedConnections = new ConcurrentBag<string>();
         
         Task[] tasks = new Task[activeConnections.Count];
-        for (int i = 0; i < activeConnections.Count; i++)
+        for (int index = 0; index < activeConnections.Count; index++)
         {
-            PulseConnection connection = activeConnections[i];
-            tasks[i] = SendToConnectionAsync(connection, payload, failedConnections, cancellationToken);
+            PulseConnection connection = activeConnections[index];
+            tasks[index] = SendToConnectionAsync(connection, payload, failedConnections, cancellationToken);
         }
 
         await Task.WhenAll(tasks).ConfigureAwait(false);
