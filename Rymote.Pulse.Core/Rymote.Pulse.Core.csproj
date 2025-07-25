@@ -8,6 +8,7 @@
         <PackageId>Rymote.Pulse.Core</PackageId>
         <Authors>Rymote</Authors>
         <Description>Core library for Rymote.Pulse</Description>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     </PropertyGroup>
 
     <ItemGroup>

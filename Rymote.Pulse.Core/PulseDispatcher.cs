@@ -14,34 +14,48 @@ namespace Rymote.Pulse.Core;
 public class PulseDispatcher : IDisposable
 {
     public readonly PulseConnectionManager ConnectionManager;
-    
+
     private readonly List<Func<PulseConnection, Task>> _onConnectHandlers = [];
     private readonly List<Func<PulseConnection, Task>> _onDisconnectHandlers = [];
-    
+
     [Obsolete("Use AddOnConnectHandler instead to support multiple handlers")]
-    public Func<PulseConnection, Task>? OnConnect 
-    { 
+    public Func<PulseConnection, Task>? OnConnect
+    {
         get => _onConnectHandlers.FirstOrDefault();
-        set 
-        { 
+        set
+        {
             _onConnectHandlers.Clear();
             if (value != null) _onConnectHandlers.Add(value);
         }
     }
-    
+
     private readonly IPulseLogger _logger;
-    private readonly List<(HandlePattern HandlePattern, string Version, Func<PulseContext, Task> Handler)> _handlers;
     private readonly PulseMiddlewarePipeline _pipeline;
     private readonly ConcurrentDictionary<string, (Channel<byte[]> Channel, DateTime LastActivity)> _inboundStreams;
     private readonly Timer _cleanupTimer;
 
+    private readonly List<(HandlePattern HandlePattern, string Version, Func<PulseContext, Task> Handler)> _handlers;
+
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, Func<PulseContext, Task>>> _fastHandlers;
+
+    private readonly List<(Regex CompiledRegex, string Version, Func<PulseContext, Task> Handler, string[] GroupNames)>
+        _regexHandlers;
+
+    private readonly ReaderWriterLockSlim _regexHandlersLock;
+
     public PulseDispatcher(PulseConnectionManager connectionManager, IPulseLogger logger)
     {
         ConnectionManager = connectionManager;
-        
+
         _logger = logger;
         _handlers = new List<(HandlePattern HandlePattern, string Version, Func<PulseContext, Task> Handler)>();
-        
+
+        _fastHandlers =
+            new ConcurrentDictionary<string, ConcurrentDictionary<string, Func<PulseContext, Task>>>(StringComparer
+                .OrdinalIgnoreCase);
+        _regexHandlers = new List<(Regex, string, Func<PulseContext, Task>, string[])>();
+        _regexHandlersLock = new ReaderWriterLockSlim();
+
         _pipeline = new PulseMiddlewarePipeline();
         _inboundStreams = new ConcurrentDictionary<string, (Channel<byte[]>, DateTime)>();
         _cleanupTimer = new Timer(CleanupAbandonedStreams, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
@@ -57,8 +71,9 @@ public class PulseDispatcher : IDisposable
 
         foreach (string key in keysToRemove)
         {
-            if (!_inboundStreams.TryRemove(key, out (Channel<byte[]> Channel, DateTime LastActivity) streamInfo)) continue;
-            
+            if (!_inboundStreams.TryRemove(key, out (Channel<byte[]> Channel, DateTime LastActivity) streamInfo))
+                continue;
+
             streamInfo.Channel.Writer.TryComplete();
             _logger?.LogInfo($"Cleaned up abandoned stream: {key}");
         }
@@ -68,7 +83,7 @@ public class PulseDispatcher : IDisposable
     {
         _onConnectHandlers.Add(handler);
     }
-    
+
     public async Task ExecuteOnConnectHandlersAsync(PulseConnection connection)
     {
         foreach (Func<PulseConnection, Task> handler in _onConnectHandlers)
@@ -84,12 +99,12 @@ public class PulseDispatcher : IDisposable
             }
         }
     }
-    
+
     public void AddOnDisconnectHandler(Func<PulseConnection, Task> handler)
     {
         _onDisconnectHandlers.Add(handler);
     }
-    
+
     public async Task ExecuteOnDisconnectHandlersAsync(PulseConnection connection)
     {
         foreach (var handler in _onDisconnectHandlers)
@@ -104,10 +119,37 @@ public class PulseDispatcher : IDisposable
             }
         }
     }
-    
+
     public void Use(PulseMiddlewareDelegate middleware)
     {
         _pipeline.Use(middleware);
+    }
+
+    private void RegisterHandler(string handle, string version, Func<PulseContext, Task> handlerFunc)
+    {
+        version = version.ToLowerInvariant();
+
+        if (!handle.Contains('{') && !handle.Contains('*') && !handle.Contains('['))
+        {
+            ConcurrentDictionary<string, Func<PulseContext, Task>> versionDict = _fastHandlers.GetOrAdd(version,
+                _ => new ConcurrentDictionary<string, Func<PulseContext, Task>>(StringComparer.OrdinalIgnoreCase));
+            versionDict[handle] = handlerFunc;
+        }
+        else
+        {
+            HandlePattern handlePattern = new HandlePattern(handle);
+            string[] groupNames = handlePattern.Regex.GetGroupNames().Where(name => name != "0").ToArray();
+
+            _regexHandlersLock.EnterWriteLock();
+            try
+            {
+                _regexHandlers.Add((handlePattern.Regex, version, handlerFunc, groupNames));
+            }
+            finally
+            {
+                _regexHandlersLock.ExitWriteLock();
+            }
+        }
     }
 
     public void MapRpc<TResponse>(
@@ -116,10 +158,10 @@ public class PulseDispatcher : IDisposable
         string version = "v1")
         where TResponse : class, new()
     {
-        _handlers.Add((new HandlePattern(handle), version.ToLowerInvariant(), async context =>
+        RegisterHandler(handle, version, async context =>
         {
             TResponse responseBody = await handlerFunc(context);
-            
+
             PulseEnvelope<TResponse> responseEnvelope = new PulseEnvelope<TResponse>
             {
                 Handle = context.UntypedRequest.Handle,
@@ -130,11 +172,11 @@ public class PulseDispatcher : IDisposable
                 ClientCorrelationId = context.UntypedRequest.ClientCorrelationId,
                 Status = PulseStatus.OK
             };
-            
+
             context.TypedResponseEnvelope = responseEnvelope;
-        }));
+        });
     }
-    
+
     public void MapRpc<TRequest, TResponse>(
         string handle,
         Func<TRequest, PulseContext, Task<TResponse>> handlerFunc,
@@ -142,11 +184,11 @@ public class PulseDispatcher : IDisposable
         where TRequest : class, new()
         where TResponse : class, new()
     {
-        _handlers.Add((new HandlePattern(handle), version.ToLowerInvariant(), async context =>
+        RegisterHandler(handle, version, async context =>
         {
             PulseEnvelope<TRequest> requestEnvelope = context.GetTypedRequestEnvelope<TRequest>();
             TResponse responseBody = await handlerFunc(requestEnvelope.Body, context);
-            
+
             PulseEnvelope<TResponse> responseEnvelope = new PulseEnvelope<TResponse>
             {
                 Handle = requestEnvelope.Handle,
@@ -157,9 +199,9 @@ public class PulseDispatcher : IDisposable
                 ClientCorrelationId = requestEnvelope.ClientCorrelationId,
                 Status = PulseStatus.OK
             };
-            
+
             context.TypedResponseEnvelope = responseEnvelope;
-        }));
+        });
     }
 
     public void MapRpcStream<TRequest, TResponse>(
@@ -169,11 +211,11 @@ public class PulseDispatcher : IDisposable
         where TRequest : class, new()
         where TResponse : class, new()
     {
-        _handlers.Add((new HandlePattern(handle), version.ToLowerInvariant(), async context =>
+        RegisterHandler(handle, version, async context =>
         {
             PulseEnvelope<TRequest> requestEnvelope = context.GetTypedRequestEnvelope<TRequest>();
             IAsyncEnumerable<TResponse> responses = handlerFunc(requestEnvelope.Body, context);
-            
+
             await foreach (TResponse chunk in responses)
             {
                 PulseEnvelope<TResponse> chunkEnvelope = new PulseEnvelope<TResponse>
@@ -187,7 +229,7 @@ public class PulseDispatcher : IDisposable
                     IsStreamChunk = true,
                     EndOfStream = false
                 };
-                
+
                 if (context.SendChunkAsync != null)
                     await context.SendChunkAsync(MsgPackSerdes.Serialize(chunkEnvelope));
             }
@@ -203,10 +245,10 @@ public class PulseDispatcher : IDisposable
                 IsStreamChunk = true,
                 EndOfStream = true
             };
-            
+
             if (context.SendChunkAsync != null)
                 await context.SendChunkAsync(MsgPackSerdes.Serialize(endOfStreamEnvelope));
-        }));
+        });
     }
 
     public void MapClientStream<TChunk>(
@@ -215,10 +257,11 @@ public class PulseDispatcher : IDisposable
         string version = "v1")
         where TChunk : class, new()
     {
-        _handlers.Add((new HandlePattern(handle), version.ToLowerInvariant(), async context =>
+        RegisterHandler(handle, version, async context =>
         {
             string? clientCorrelationId = context.UntypedRequest.ClientCorrelationId;
-            if (clientCorrelationId != null && _inboundStreams.TryRemove(clientCorrelationId, out (Channel<byte[]> Channel, DateTime LastActivity) streamInfo))
+            if (clientCorrelationId != null && _inboundStreams.TryRemove(clientCorrelationId,
+                    out (Channel<byte[]> Channel, DateTime LastActivity) streamInfo))
             {
                 async IAsyncEnumerable<TChunk> GetChunks(ChannelReader<byte[]> reader)
                 {
@@ -228,13 +271,13 @@ public class PulseDispatcher : IDisposable
                         yield return envelope.Body;
                     }
                 }
-                
+
                 IAsyncEnumerable<TChunk> chunks = GetChunks(streamInfo.Channel.Reader);
                 await handlerFunc(chunks, context);
             }
 
             context.TypedResponseEnvelope = null;
-        }));
+        });
     }
 
     public void MapEvent(
@@ -242,11 +285,11 @@ public class PulseDispatcher : IDisposable
         Func<PulseContext, Task> handlerFunc,
         string version = "v1")
     {
-        _handlers.Add((new HandlePattern(handle), version.ToLowerInvariant(), async context =>
+        RegisterHandler(handle, version, async context =>
         {
             await handlerFunc(context);
             context.TypedResponseEnvelope = null;
-        }));
+        });
     }
 
     public void MapEvent<TEvent>(
@@ -255,47 +298,34 @@ public class PulseDispatcher : IDisposable
         string version = "v1")
         where TEvent : class, new()
     {
-        _handlers.Add((new HandlePattern(handle), version.ToLowerInvariant(), async context =>
+        RegisterHandler(handle, version, async context =>
         {
             PulseEnvelope<TEvent> eventEnvelope = context.GetTypedRequestEnvelope<TEvent>();
             await handlerFunc(eventEnvelope.Body, context);
             context.TypedResponseEnvelope = null;
-        }));
-    }
-    
-    public void SendEvent<TEvent>(
-        string handle,
-        Func<TEvent, PulseContext, Task> handlerFunc,
-        string version = "v1")
-        where TEvent : class, new()
-    {
-        _handlers.Add((new HandlePattern(handle), version.ToLowerInvariant(), async context =>
-        {
-            PulseEnvelope<TEvent> eventEnvelope = context.GetTypedRequestEnvelope<TEvent>();
-            await handlerFunc(eventEnvelope.Body, context);
-            context.TypedResponseEnvelope = null;
-        }));
+        });
     }
 
     public async Task ProcessRawAsync(PulseConnection connection, byte[] rawData)
     {
         PulseEnvelope<object> envelope = MsgPackSerdes.Deserialize<PulseEnvelope<object>>(rawData);
-        string handleKey = envelope.Handle.ToLowerInvariant();
-        string versionKey = envelope.Version.ToLowerInvariant();
+        string handleKey = envelope.Handle;
+        string versionKey = envelope.Version;
 
-        if (envelope.Kind == PulseKind.STREAM && envelope.IsStreamChunk.HasValue && envelope.IsStreamChunk.Value && envelope.ClientCorrelationId != null)
+        if (envelope.Kind == PulseKind.STREAM && envelope.IsStreamChunk.HasValue && envelope.IsStreamChunk.Value &&
+            envelope.ClientCorrelationId != null)
         {
             (Channel<byte[]> Channel, DateTime LastActivity) streamInfo = _inboundStreams.GetOrAdd(
                 envelope.ClientCorrelationId,
                 _ => (Channel.CreateUnbounded<byte[]>(), DateTime.UtcNow));
-            
+
             _inboundStreams[envelope.ClientCorrelationId] = (streamInfo.Channel, DateTime.UtcNow);
-            
+
             await streamInfo.Channel.Writer.WriteAsync(rawData);
 
             if (!envelope.EndOfStream.HasValue || !envelope.EndOfStream.Value) return;
             streamInfo.Channel.Writer.Complete();
-            
+
             _inboundStreams.TryRemove(envelope.ClientCorrelationId, out _);
 
             return;
@@ -304,23 +334,41 @@ public class PulseDispatcher : IDisposable
         Func<PulseContext, Task>? handler = null;
         Dictionary<string, string> parameters = new Dictionary<string, string>();
 
-        foreach ((HandlePattern handlePattern, string version, Func<PulseContext, Task> handlerFunc) in _handlers)
+        if (_fastHandlers.TryGetValue(versionKey,
+                out ConcurrentDictionary<string, Func<PulseContext, Task>>? versionHandlers) &&
+            versionHandlers.TryGetValue(handleKey, out handler))
         {
-            if (version != versionKey) continue;
             
-            Match match = handlePattern.Regex.Match(handleKey);
-            if (!match.Success) continue;
-            
-            handler = handlerFunc;
-            foreach (string groupName in handlePattern.Regex.GetGroupNames())
+        }
+        else
+        {
+            _regexHandlersLock.EnterReadLock();
+            try
             {
-                if (match.Groups[groupName].Success)
+                foreach ((Regex regex, string version, var handlerFunc, string[] groupNames) in _regexHandlers)
                 {
-                    parameters[groupName] = match.Groups[groupName].Value;
+                    if (!string.Equals(version, versionKey, StringComparison.OrdinalIgnoreCase)) 
+                        continue;
+                    
+                    Match match = regex.Match(handleKey);
+                    if (!match.Success) continue;
+                    
+                    handler = handlerFunc;
+                    
+                    foreach (string groupName in groupNames)
+                    {
+                        Group group = match.Groups[groupName];
+                        if (group.Success)
+                            parameters[groupName] = group.Value;
+                    }
+                    
+                    break;
                 }
             }
-            
-            break;
+            finally
+            {
+                _regexHandlersLock.ExitReadLock();
+            }
         }
 
         if (handler == null)
@@ -354,11 +402,13 @@ public class PulseDispatcher : IDisposable
     public void Dispose()
     {
         _cleanupTimer?.Dispose();
-        
+        _regexHandlersLock?.Dispose();
+
         foreach (KeyValuePair<string, (Channel<byte[]> Channel, DateTime LastActivity)> keyValuePair in _inboundStreams)
         {
             keyValuePair.Value.Channel.Writer.TryComplete();
         }
+
         _inboundStreams.Clear();
     }
 }

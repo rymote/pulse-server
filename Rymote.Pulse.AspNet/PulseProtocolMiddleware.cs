@@ -40,37 +40,39 @@ public static class PulseProtocolMiddleware
                     }
 
                     string connectionId = Guid.NewGuid().ToString();
-                    
+
                     string ipAddress = GetClientIpAddress(httpContext);
                     string userAgent = httpContext.Request.Headers["User-Agent"].FirstOrDefault() ?? "Unknown";
                     string origin = httpContext.Request.Headers["Origin"].FirstOrDefault() ?? "Unknown";
                     string? protocol = httpContext.Request.Protocol;
-                    
+
                     string? forwardedFor = httpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault();
                     string? realIp = httpContext.Request.Headers["X-Real-IP"].FirstOrDefault();
-                    
+
                     Dictionary<string, string> queryParameters = httpContext.Request.Query
                         .ToDictionary(
-                            keyValuePair => keyValuePair.Key, 
+                            keyValuePair => keyValuePair.Key,
                             keyValuePair => keyValuePair.Value.ToString());
-                    
+
                     WebSocket webSocketConnection = await httpContext.WebSockets.AcceptWebSocketAsync();
                     PulseConnection connection =
-                        await pulseDispatcher.ConnectionManager.AddConnectionAsync(connectionId, webSocketConnection, queryParameters);
-                    
+                        await pulseDispatcher.ConnectionManager.AddConnectionAsync(connectionId, webSocketConnection,
+                            queryParameters);
+
                     connection.SetMetadata("http_context", httpContext);
                     connection.SetMetadata("ip_address", ipAddress);
                     connection.SetMetadata("user_agent", userAgent);
                     connection.SetMetadata("origin", origin);
                     connection.SetMetadata("connected_at", DateTime.UtcNow);
-                    
-                    pulseLogger.LogInfo($"[{connectionId}] Client connected: IP: {ipAddress} | Origin: {origin} | UserAgent: {userAgent}");
-                    
+
+                    pulseLogger.LogInfo(
+                        $"[{connectionId}] Client connected: IP: {ipAddress} | Origin: {origin} | UserAgent: {userAgent}");
+
                     if (!string.IsNullOrEmpty(forwardedFor))
                     {
                         pulseLogger.LogInfo($"[{connectionId}] Connection forwarded through: {forwardedFor}");
                     }
-                    
+
                     try
                     {
                         await pulseDispatcher.ExecuteOnConnectHandlersAsync(connection);
@@ -78,15 +80,15 @@ public static class PulseProtocolMiddleware
                     catch (Exception exception)
                     {
                         pulseLogger.LogError($"[{connectionId}] Error in OnConnect handler", exception);
-                        
+
                         await pulseDispatcher.ConnectionManager.DisconnectAsync(
                             connection,
                             WebSocketCloseStatus.PolicyViolation,
                             exception.Message);
-                        
+
                         return;
                     }
-                    
+
                     try
                     {
                         await HandleSocketAsync(
@@ -103,33 +105,35 @@ public static class PulseProtocolMiddleware
                     finally
                     {
                         await pulseDispatcher.ExecuteOnDisconnectHandlersAsync(connection);
-                        
+
                         bool connectedAtExists = connection.Metadata.TryGet("connected_at", out DateTime connectedAt);
-                        TimeSpan connectedDuration = DateTime.UtcNow - (connectedAtExists ? connectedAt : DateTime.UtcNow);
+                        TimeSpan connectedDuration =
+                            DateTime.UtcNow - (connectedAtExists ? connectedAt : DateTime.UtcNow);
                         await pulseDispatcher.ConnectionManager.RemoveConnectionAsync(connectionId);
-                        
-                        string durationText = connectedDuration.TotalHours >= 24 
-                            ? connectedDuration.ToString(@"d\.hh\:mm\:ss") 
+
+                        string durationText = connectedDuration.TotalHours >= 24
+                            ? connectedDuration.ToString(@"d\.hh\:mm\:ss")
                             : connectedDuration.ToString(@"hh\:mm\:ss");
-                        
-                        pulseLogger.LogInfo($"[{connectionId}] Client disconnected: IP: {ipAddress} | Duration: {durationText}");
+
+                        pulseLogger.LogInfo(
+                            $"[{connectionId}] Client disconnected: IP: {ipAddress} | Duration: {durationText}");
                     }
                 });
             }
         );
     }
-    
+
     private static string GetClientIpAddress(HttpContext context)
     {
         string? forwardedFor = context.Request.Headers["X-Forwarded-For"].FirstOrDefault();
         if (!string.IsNullOrEmpty(forwardedFor))
             return forwardedFor.Split(',')[0].Trim();
-        
-        
+
+
         string? realIp = context.Request.Headers["X-Real-IP"].FirstOrDefault();
         if (!string.IsNullOrEmpty(realIp))
             return realIp;
-        
+
         return context.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
     }
 
@@ -144,7 +148,10 @@ public static class PulseProtocolMiddleware
         ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
         byte[] receiveBuffer = arrayPool.Rent(BufferSizeInBytes);
 
-        List<ArraySegment<byte>> messageSegments = new List<ArraySegment<byte>>();
+        byte[] messageAssemblyBuffer = arrayPool.Rent(MaxMessageSize);
+
+        ArraySegment<byte>[] messageSegments = new ArraySegment<byte>[256];
+        int segmentCount = 0;
         int totalMessageSize = 0;
 
         try
@@ -191,10 +198,10 @@ public static class PulseProtocolMiddleware
                     {
                         pulseLogger.LogError($"Message size exceeds maximum allowed size of {MaxMessageSize} bytes");
 
-                        foreach (ArraySegment<byte> segment in messageSegments)
-                            arrayPool.Return(segment.Array!);
+                        for (int i = 0; i < segmentCount; i++)
+                            arrayPool.Return(messageSegments[i].Array!);
 
-                        messageSegments.Clear();
+                        segmentCount = 0;
                         totalMessageSize = 0;
 
                         await connection.Socket.CloseAsync(
@@ -204,9 +211,19 @@ public static class PulseProtocolMiddleware
                         break;
                     }
 
+                    if (segmentCount >= messageSegments.Length)
+                    {
+                        pulseLogger.LogError("Message has too many segments");
+                        await connection.Socket.CloseAsync(
+                            WebSocketCloseStatus.MessageTooBig,
+                            "Message has too many segments",
+                            CancellationToken.None);
+                        break;
+                    }
+
                     byte[] segmentBuffer = arrayPool.Rent(receiveResult.Count);
                     Buffer.BlockCopy(receiveBuffer, 0, segmentBuffer, 0, receiveResult.Count);
-                    messageSegments.Add(new ArraySegment<byte>(segmentBuffer, 0, receiveResult.Count));
+                    messageSegments[segmentCount++] = new ArraySegment<byte>(segmentBuffer, 0, receiveResult.Count);
                 }
 
                 if (!receiveResult.EndOfMessage)
@@ -214,24 +231,39 @@ public static class PulseProtocolMiddleware
                     continue;
                 }
 
-                byte[] completeMessageBytes = new byte[totalMessageSize];
-                int offset = 0;
-
-                foreach (ArraySegment<byte> segment in messageSegments)
-                {
-                    Buffer.BlockCopy(segment.Array!, segment.Offset, completeMessageBytes, offset, segment.Count);
-                    offset += segment.Count;
-                    arrayPool.Return(segment.Array!);
-                }
-
-                messageSegments.Clear();
-                totalMessageSize = 0;
-
                 try
                 {
-                    await pulseDispatcher.ProcessRawAsync(
-                        connection,
-                        completeMessageBytes);
+                    if (segmentCount == 1)
+                    {
+                        ArraySegment<byte> singleSegment = messageSegments[0];
+                        byte[] singleMessageData = new byte[singleSegment.Count];
+                        Buffer.BlockCopy(singleSegment.Array!, singleSegment.Offset, singleMessageData, 0,
+                            singleSegment.Count);
+
+                        await pulseDispatcher.ProcessRawAsync(connection, singleMessageData);
+
+                        arrayPool.Return(singleSegment.Array!);
+                    }
+                    else if (segmentCount > 1)
+                    {
+                        int offset = 0;
+                        for (int i = 0; i < segmentCount; i++)
+                        {
+                            ArraySegment<byte> segment = messageSegments[i];
+                            Buffer.BlockCopy(segment.Array!, segment.Offset, messageAssemblyBuffer, offset,
+                                segment.Count);
+                            offset += segment.Count;
+                            arrayPool.Return(segment.Array!);
+                        }
+
+                        byte[] completeMessageBytes = new byte[totalMessageSize];
+                        Buffer.BlockCopy(messageAssemblyBuffer, 0, completeMessageBytes, 0, totalMessageSize);
+
+                        await pulseDispatcher.ProcessRawAsync(connection, completeMessageBytes);
+                    }
+
+                    segmentCount = 0;
+                    totalMessageSize = 0;
                 }
                 catch (Exception processingException)
                 {
@@ -239,49 +271,20 @@ public static class PulseProtocolMiddleware
                         "Error processing incoming Pulse message",
                         processingException);
 
+                    for (int i = 0; i < segmentCount; i++)
+                        arrayPool.Return(messageSegments[i].Array!);
+
+                    segmentCount = 0;
+                    totalMessageSize = 0;
+
                     PulseEnvelope<object>? deserializedEnvelope = null;
                     try
                     {
-                        deserializedEnvelope = MsgPackSerdes
-                            .Deserialize<PulseEnvelope<object>>(completeMessageBytes);
                     }
                     catch (Exception deserializationException)
                     {
                         pulseLogger.LogWarning(
                             $"Failed to deserialize invalid incoming envelope: {deserializationException.Message}");
-                    }
-
-                    if (deserializedEnvelope != null)
-                    {
-                        PulseEnvelope<object?> errorResponseEnvelope = new PulseEnvelope<object?>
-                        {
-                            Id = deserializedEnvelope.Id,
-                            Handle = deserializedEnvelope.Handle,
-                            Body = null,
-                            AuthToken = deserializedEnvelope.AuthToken,
-                            Kind = deserializedEnvelope.Kind,
-                            Version = deserializedEnvelope.Version,
-                            ClientCorrelationId = deserializedEnvelope.ClientCorrelationId,
-                            Status = PulseStatus.BAD_REQUEST,
-                            Error = "Invalid message: " + processingException.Message
-                        };
-
-                        byte[] errorResponseBytes = MsgPackSerdes.Serialize(errorResponseEnvelope);
-
-                        try
-                        {
-                            await connection.Socket.SendAsync(
-                                new ArraySegment<byte>(errorResponseBytes),
-                                WebSocketMessageType.Binary,
-                                true,
-                                CancellationToken.None);
-                        }
-                        catch (Exception sendException)
-                        {
-                            pulseLogger.LogError(
-                                "Error sending BAD_REQUEST response to client",
-                                sendException);
-                        }
                     }
                 }
             }
@@ -289,18 +292,17 @@ public static class PulseProtocolMiddleware
         finally
         {
             arrayPool.Return(receiveBuffer);
+            arrayPool.Return(messageAssemblyBuffer);
 
-            foreach (ArraySegment<byte> segment in messageSegments)
-                arrayPool.Return(segment.Array!);
+            for (int i = 0; i < segmentCount; i++)
+                arrayPool.Return(messageSegments[i].Array!);
 
-            if (connection.Socket.State == WebSocketState.Open)
+            if (connection.IsOpen)
             {
                 try
                 {
-                    await connection.Socket.CloseAsync(
-                        WebSocketCloseStatus.NormalClosure,
-                        "Server is closing the connection",
-                        CancellationToken.None);
+                    await pulseDispatcher.ConnectionManager.DisconnectAsync(connection,
+                        WebSocketCloseStatus.NormalClosure, "Server is closing the connection", CancellationToken.None);
                     pulseLogger.LogInfo("Connection closed cleanly by server");
                 }
                 catch (Exception closeException)

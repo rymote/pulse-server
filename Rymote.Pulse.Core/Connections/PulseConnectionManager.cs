@@ -13,11 +13,11 @@ public class PulseConnectionManager
     private readonly ConcurrentDictionary<string, PulseConnection> _connections = new();
     private readonly ConcurrentDictionary<string, PulseGroup> _groups = new();
     
-    private readonly IClusterStore? _clusterStore;
+    private readonly IPulseClusterStore? _clusterStore;
     private readonly string _nodeId;
     private readonly IPulseLogger? _logger;
 
-    public PulseConnectionManager(IClusterStore? clusterStore = null, string? nodeId = null, IPulseLogger? logger = null)
+    public PulseConnectionManager(IPulseClusterStore? clusterStore = null, string? nodeId = null, IPulseLogger? logger = null)
     {
         _clusterStore = clusterStore;
         _nodeId = nodeId ?? Environment.MachineName;
