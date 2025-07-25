@@ -1,28 +1,25 @@
 ﻿using System.Collections.Concurrent;
 using System.Net.WebSockets;
+using Rymote.Pulse.Core.Metadata;
 
 namespace Rymote.Pulse.Core.Connections;
 
-public class PulseConnection
+public class PulseConnection : IDisposable
 {
-    private const int MAX_METADATA_ENTRIES = 100;
-    
     public string ConnectionId { get; }
     public WebSocket Socket { get; }
     public string NodeId { get; }
-
-    private readonly ConcurrentDictionary<string, object> _metadata 
-        = new ConcurrentDictionary<string, object>();
-    public IReadOnlyDictionary<string, object> Metadata => _metadata;
-    
+    public PulseMetadata Metadata { get; }
     private readonly IReadOnlyDictionary<string, string> _queryParameters;
     public IReadOnlyDictionary<string, string> QueryParameters => _queryParameters;
+    private bool _disposed;
     
     public PulseConnection(string connectionId, WebSocket socket, string nodeId, IDictionary<string, string>? queryParameters = null)
     {
         ConnectionId = connectionId;
         Socket = socket;
         NodeId = nodeId;
+        Metadata = new PulseMetadata();
         
         _queryParameters = queryParameters != null 
             ? new Dictionary<string, string>(queryParameters) 
@@ -53,34 +50,36 @@ public class PulseConnection
     
     public void SetMetadata(string key, object value)
     {
-        if (_metadata.Count >= MAX_METADATA_ENTRIES && !_metadata.ContainsKey(key))
-            throw new InvalidOperationException($"Maximum metadata entries ({MAX_METADATA_ENTRIES}) exceeded");
-        
-        _metadata[key] = value;
+        Metadata.SetAsync(key, value).GetAwaiter().GetResult();
     }
 
     public bool TryGetMetadata<TMetadataValue>(string key, out TMetadataValue? value)
     {
-        if (_metadata.TryGetValue(key, out object? obj) && obj is TMetadataValue cast)
-        {
-            value = cast;
-            return true;
-        }
-        
-        value = default;
-        return false;
+        return Metadata.TryGet(key, out value);
     }
 
-    public bool RemoveMetadata(string key) => _metadata.TryRemove(key, out _);
-    
+    public bool RemoveMetadata(string key)
+    {
+        return Metadata.RemoveAsync(key).GetAwaiter().GetResult();
+    }
     
     public string? GetQueryParameter(string key)
     {
-        return _queryParameters.TryGetValue(key, out string? value) ? value : null;
+        return _queryParameters.GetValueOrDefault(key);
     }
     
     public bool TryGetQueryParameter(string key, out string? value)
     {
         return _queryParameters.TryGetValue(key, out value);
+    }
+    
+    
+    public void Dispose()
+    {
+        if (_disposed) return;
+        
+        _disposed = true;
+        Metadata?.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

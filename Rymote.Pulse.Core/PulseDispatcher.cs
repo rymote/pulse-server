@@ -14,7 +14,21 @@ namespace Rymote.Pulse.Core;
 public class PulseDispatcher : IDisposable
 {
     public readonly PulseConnectionManager ConnectionManager;
-    public Func<PulseConnection, Task>? OnConnect { get; set; }
+    
+    private readonly List<Func<PulseConnection, Task>> _onConnectHandlers = [];
+    private readonly List<Func<PulseConnection, Task>> _onDisconnectHandlers = [];
+    
+    [Obsolete("Use AddOnConnectHandler instead to support multiple handlers")]
+    public Func<PulseConnection, Task>? OnConnect 
+    { 
+        get => _onConnectHandlers.FirstOrDefault();
+        set 
+        { 
+            _onConnectHandlers.Clear();
+            if (value != null) _onConnectHandlers.Add(value);
+        }
+    }
+    
     private readonly IPulseLogger _logger;
     private readonly List<(HandlePattern HandlePattern, string Version, Func<PulseContext, Task> Handler)> _handlers;
     private readonly PulseMiddlewarePipeline _pipeline;
@@ -50,6 +64,47 @@ public class PulseDispatcher : IDisposable
         }
     }
 
+    public void AddOnConnectHandler(Func<PulseConnection, Task> handler)
+    {
+        _onConnectHandlers.Add(handler);
+    }
+    
+    public async Task ExecuteOnConnectHandlersAsync(PulseConnection connection)
+    {
+        foreach (Func<PulseConnection, Task> handler in _onConnectHandlers)
+        {
+            try
+            {
+                await handler(connection);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError($"Error in OnConnect handler", exception);
+                throw;
+            }
+        }
+    }
+    
+    public void AddOnDisconnectHandler(Func<PulseConnection, Task> handler)
+    {
+        _onDisconnectHandlers.Add(handler);
+    }
+    
+    public async Task ExecuteOnDisconnectHandlersAsync(PulseConnection connection)
+    {
+        foreach (var handler in _onDisconnectHandlers)
+        {
+            try
+            {
+                await handler(connection);
+            }
+            catch (Exception exception)
+            {
+                _logger?.LogError($"Error in OnDisconnect handler", exception);
+            }
+        }
+    }
+    
     public void Use(PulseMiddlewareDelegate middleware)
     {
         _pipeline.Use(middleware);

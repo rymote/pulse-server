@@ -71,23 +71,20 @@ public static class PulseProtocolMiddleware
                         pulseLogger.LogInfo($"[{connectionId}] Connection forwarded through: {forwardedFor}");
                     }
                     
-                    if (pulseDispatcher.OnConnect != null)
+                    try
                     {
-                        try
-                        {
-                            await pulseDispatcher.OnConnect(connection);
-                        }
-                        catch (Exception exception)
-                        {
-                            pulseLogger.LogError($"[{connectionId}] Error in OnConnect handler", exception);
-                            
-                            await pulseDispatcher.ConnectionManager.DisconnectAsync(
-                                connection,
-                                WebSocketCloseStatus.PolicyViolation,
-                                exception.Message);
-                            
-                            return;
-                        }
+                        await pulseDispatcher.ExecuteOnConnectHandlersAsync(connection);
+                    }
+                    catch (Exception exception)
+                    {
+                        pulseLogger.LogError($"[{connectionId}] Error in OnConnect handler", exception);
+                        
+                        await pulseDispatcher.ConnectionManager.DisconnectAsync(
+                            connection,
+                            WebSocketCloseStatus.PolicyViolation,
+                            exception.Message);
+                        
+                        return;
                     }
                     
                     try
@@ -105,7 +102,10 @@ public static class PulseProtocolMiddleware
                     }
                     finally
                     {
-                        TimeSpan connectedDuration = DateTime.UtcNow - (DateTime)connection.Metadata.GetValueOrDefault("connected_at", DateTime.UtcNow);
+                        await pulseDispatcher.ExecuteOnDisconnectHandlersAsync(connection);
+                        
+                        bool connectedAtExists = connection.Metadata.TryGet("connected_at", out DateTime connectedAt);
+                        TimeSpan connectedDuration = DateTime.UtcNow - (connectedAtExists ? connectedAt : DateTime.UtcNow);
                         await pulseDispatcher.ConnectionManager.RemoveConnectionAsync(connectionId);
                         pulseLogger.LogInfo($"[{connectionId}] Client disconnected: IP: {ipAddress} | Duration: {connectedDuration:hh\\\\:mm\\\\:ss}");
                     }

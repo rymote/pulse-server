@@ -37,19 +37,20 @@ public class PulseConnectionManager
 
     public async Task RemoveConnectionAsync(string connectionId)
     {
-        _connections.TryRemove(connectionId, out _);
+        if (_connections.TryRemove(connectionId, out PulseConnection? connection))
+            connection.Dispose();
 
-        List<string> groupsToCheck = new List<string>();
+        List<string> groupsToCheck = [];
         
         foreach (KeyValuePair<string, PulseGroup> keyValuePair in _groups)
         {
             keyValuePair.Value.Remove(connectionId);
-            if (keyValuePair.Value.IsEmpty)
+            if (!keyValuePair.Value.Members.Any())
                 groupsToCheck.Add(keyValuePair.Key);
         }
         
         foreach (string groupName in groupsToCheck)
-            if (_groups.TryRemove(groupName, out PulseGroup? group) && group.IsEmpty)
+            if (_groups.TryRemove(groupName, out PulseGroup? group) && !group.Members.Any())
                 _logger?.LogInfo($"Removed empty group: {groupName}");
 
         if (_clusterStore != null)
@@ -119,7 +120,7 @@ public class PulseConnectionManager
         {
             group.Remove(connectionId);
             
-            if (group.IsEmpty && _groups.TryRemove(groupName, out _))
+            if (!group.Members.Any() && _groups.TryRemove(groupName, out _))
                 _logger?.LogInfo($"Removed empty group: {groupName}");
         }
 
@@ -133,7 +134,7 @@ public class PulseConnectionManager
         {
             group.Remove(connection.ConnectionId);
             
-            if (group.IsEmpty && _groups.TryRemove(groupName, out _))
+            if (!group.Members.Any() && _groups.TryRemove(groupName, out _))
                 _logger?.LogInfo($"Removed empty group: {groupName}");
         }
 
