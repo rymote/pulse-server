@@ -1,6 +1,4 @@
-﻿using System.Threading.Tasks;
-
-namespace Rymote.Pulse.Core.Cluster;
+﻿namespace Rymote.Pulse.Core.Cluster;
 
 public interface IClusterStore
 {

@@ -107,7 +107,12 @@ public static class PulseProtocolMiddleware
                         bool connectedAtExists = connection.Metadata.TryGet("connected_at", out DateTime connectedAt);
                         TimeSpan connectedDuration = DateTime.UtcNow - (connectedAtExists ? connectedAt : DateTime.UtcNow);
                         await pulseDispatcher.ConnectionManager.RemoveConnectionAsync(connectionId);
-                        pulseLogger.LogInfo($"[{connectionId}] Client disconnected: IP: {ipAddress} | Duration: {connectedDuration:hh\\\\:mm\\\\:ss}");
+                        
+                        string durationText = connectedDuration.TotalHours >= 24 
+                            ? connectedDuration.ToString(@"d\.hh\:mm\:ss") 
+                            : connectedDuration.ToString(@"hh\:mm\:ss");
+                        
+                        pulseLogger.LogInfo($"[{connectionId}] Client disconnected: IP: {ipAddress} | Duration: {durationText}");
                     }
                 });
             }
@@ -313,7 +318,6 @@ public static class PulseProtocolMiddleware
         const int MinBufferSize = 1024;
         const int MaxBufferSize = 64 * 1024;
 
-        // Adaptive sizing based on last message
         int suggestedSize = Math.Max(MinBufferSize, lastMessageSize);
         return Math.Min(suggestedSize, MaxBufferSize);
     }
