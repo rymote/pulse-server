@@ -156,7 +156,6 @@ public class PulseDispatcher : IDisposable
         string handle,
         Func<PulseContext, Task<TResponse>> handlerFunc,
         string version = "v1")
-        where TResponse : class, new()
     {
         RegisterHandler(handle, version, async context =>
         {
@@ -181,8 +180,6 @@ public class PulseDispatcher : IDisposable
         string handle,
         Func<TRequest, PulseContext, Task<TResponse>> handlerFunc,
         string version = "v1")
-        where TRequest : class, new()
-        where TResponse : class, new()
     {
         RegisterHandler(handle, version, async context =>
         {
@@ -208,8 +205,6 @@ public class PulseDispatcher : IDisposable
         string handle,
         Func<TRequest, PulseContext, IAsyncEnumerable<TResponse>> handlerFunc,
         string version = "v1")
-        where TRequest : class, new()
-        where TResponse : class, new()
     {
         RegisterHandler(handle, version, async context =>
         {
@@ -255,7 +250,6 @@ public class PulseDispatcher : IDisposable
         string handle,
         Func<IAsyncEnumerable<TChunk>, PulseContext, Task> handlerFunc,
         string version = "v1")
-        where TChunk : class, new()
     {
         RegisterHandler(handle, version, async context =>
         {
@@ -296,7 +290,6 @@ public class PulseDispatcher : IDisposable
         string handle,
         Func<TEvent, PulseContext, Task> handlerFunc,
         string version = "v1")
-        where TEvent : class, new()
     {
         RegisterHandler(handle, version, async context =>
         {

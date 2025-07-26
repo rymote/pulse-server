@@ -52,14 +52,6 @@ jobs:
             --no-build \
             --output ./artifacts \
             /p:Version=${{ env.VERSION }}
-
-      - name: Pack Rymote.Pulse.MediatR
-        run: |
-          dotnet pack Rymote.Pulse.MediatR/Rymote.Pulse.MediatR.csproj \
-            --configuration Release \
-            --no-build \
-            --output ./artifacts \
-            /p:Version=${{ env.VERSION }}
             
       - name: Push to nuget.org
         env:

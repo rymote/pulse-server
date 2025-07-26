@@ -198,7 +198,6 @@ public static class PulseAttributesExtensions
     }
 
     private static Func<T, PulseContext, Task> CreateScopedEventHandler<T>(MethodInfo method, Type handlerType)
-        where T : class, new()
     {
         return async (payload, context) =>
         {
@@ -298,7 +297,6 @@ public static class PulseAttributesExtensions
 
     private static Func<PulseContext, Task<TResponse>> CreateScopedRpcHandler<TResponse>(MethodInfo method,
         Type handlerType)
-        where TResponse : class, new()
     {
         return async context =>
         {
@@ -315,8 +313,6 @@ public static class PulseAttributesExtensions
 
     private static Func<TRequest, PulseContext, Task<TResponse>> CreateScopedRpcHandlerWithRequest<TRequest, TResponse>(
         MethodInfo method, Type handlerType)
-        where TRequest : class, new()
-        where TResponse : class, new()
     {
         return async (request, context) =>
         {
