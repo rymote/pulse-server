@@ -27,7 +27,6 @@ public static class PulseAttributesExtensions
             .Where(type => type.GetMethods().Any(method =>
                 method.GetCustomAttribute<PulseEventAttribute>() != null ||
                 method.GetCustomAttribute<PulseRpcAttribute>() != null ||
-                method.GetCustomAttribute<PulseStreamAttribute>() != null ||
                 method.GetCustomAttribute<PulseOnConnectAttribute>() != null ||
                 method.GetCustomAttribute<PulseOnDisconnectAttribute>() != null ||
                 method.GetCustomAttribute<PulseMetadataChangedAttribute>() != null))
@@ -71,7 +70,6 @@ public static class PulseAttributesExtensions
                 RegisterRpcHandler(pulseDispatcher, method, handlerType, serviceProvider);
                 RegisterOnConnectHandler(pulseDispatcher, method, handlerType, serviceProvider);
                 RegisterOnDisconnectHandler(pulseDispatcher, method, handlerType, serviceProvider);
-                // RegisterStreamHandler(pulseDispatcher, method, handlerType, serviceProvider);
 
                 CollectMetadataEventHandlers(method, handlerType, serviceProvider, metadataHandlerConfigs);
             }

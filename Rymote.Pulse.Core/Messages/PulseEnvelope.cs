@@ -31,10 +31,4 @@ public class PulseEnvelope<T>
 
     [Key(8)]
     public string? Error { get; set; }
-
-    [Key(9)]
-    public bool? IsStreamChunk { get; set; }
-
-    [Key(10)]
-    public bool? EndOfStream { get; set; }
 }

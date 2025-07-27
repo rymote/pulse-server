@@ -65,52 +65,6 @@ public class PulseContext
         return MsgPackSerdes.Deserialize<PulseEnvelope<T>>(RawRequestBytes);
     }
 
-    public async Task PipeStreamAsync(Stream inputStream, int chunkSize = 8192,
-        CancellationToken cancellationToken = default)
-    {
-        if (SendChunkAsync == null)
-        {
-            throw new InvalidOperationException("SendChunkAsync is not configured.");
-        }
-
-        byte[] buffer = new byte[chunkSize];
-        int bytesRead;
-
-        while ((bytesRead = await inputStream.ReadAsync(buffer, cancellationToken)) > 0)
-        {
-            byte[] chunkData = buffer.AsSpan(0, bytesRead).ToArray();
-            PulseEnvelope<byte[]> chunkEnvelope = new PulseEnvelope<byte[]>
-            {
-                Handle = UntypedRequest.Handle,
-                Body = chunkData,
-                AuthToken = UntypedRequest.AuthToken,
-                Kind = PulseKind.STREAM,
-                Version = UntypedRequest.Version,
-                ClientCorrelationId = UntypedRequest.ClientCorrelationId,
-                IsStreamChunk = true,
-                EndOfStream = false
-            };
-
-            byte[] packed = MsgPackSerdes.Serialize(chunkEnvelope);
-            await SendChunkAsync(packed);
-        }
-
-        PulseEnvelope<byte[]> endOfStreamEnvelope = new PulseEnvelope<byte[]>
-        {
-            Handle = UntypedRequest.Handle,
-            Body = [],
-            AuthToken = UntypedRequest.AuthToken,
-            Kind = PulseKind.STREAM,
-            Version = UntypedRequest.Version,
-            ClientCorrelationId = UntypedRequest.ClientCorrelationId,
-            IsStreamChunk = true,
-            EndOfStream = true
-        };
-
-        byte[] eosPacked = MsgPackSerdes.Serialize(endOfStreamEnvelope);
-        await SendChunkAsync(eosPacked);
-    }
-
     public Task SendEventAsync<TPayload>(
         string handle,
         TPayload data,
