@@ -305,30 +305,31 @@ public class PulseDispatcher : IDisposable
         string handleKey = envelope.Handle;
         string versionKey = envelope.Version;
 
-        if (envelope.Kind == PulseKind.STREAM && envelope.IsStreamChunk.HasValue && envelope.IsStreamChunk.Value &&
+        if (envelope.Kind == PulseKind.STREAM &&
+            envelope.IsStreamChunk == true &&
             envelope.ClientCorrelationId != null)
         {
-            (Channel<byte[]> Channel, DateTime LastActivity) streamInfo = _inboundStreams.GetOrAdd(
+            bool isFirstChunk = _inboundStreams.TryAdd(
                 envelope.ClientCorrelationId,
-                _ => (Channel.CreateUnbounded<byte[]>(), DateTime.UtcNow));
+                (Channel.CreateUnbounded<byte[]>(), DateTime.UtcNow));
 
-            _inboundStreams[envelope.ClientCorrelationId] = (streamInfo.Channel, DateTime.UtcNow);
+            (Channel<byte[]> Channel, DateTime LastActivity) streamState = _inboundStreams[envelope.ClientCorrelationId];
 
-            await streamInfo.Channel.Writer.WriteAsync(rawData);
+            await streamState.Channel.Writer.WriteAsync(rawData);
+            _inboundStreams[envelope.ClientCorrelationId] = (streamState.Channel, DateTime.UtcNow);
 
-            if (!envelope.EndOfStream.HasValue || !envelope.EndOfStream.Value) return;
-            streamInfo.Channel.Writer.Complete();
+            bool isEndOfStream = envelope.EndOfStream.GetValueOrDefault();
+            if (!isFirstChunk && !isEndOfStream)
+                return;
 
-            _inboundStreams.TryRemove(envelope.ClientCorrelationId, out _);
-
-            return;
+            if (isEndOfStream)
+                streamState.Channel.Writer.TryComplete();
         }
 
         Func<PulseContext, Task>? handler = null;
         Dictionary<string, string> parameters = new Dictionary<string, string>();
 
-        if (_fastHandlers.TryGetValue(versionKey,
-                out ConcurrentDictionary<string, Func<PulseContext, Task>>? versionHandlers) &&
+        if (_fastHandlers.TryGetValue(versionKey, out ConcurrentDictionary<string, Func<PulseContext, Task>>? versionHandlers) &&
             versionHandlers.TryGetValue(handleKey, out handler))
         {
             
@@ -338,23 +339,24 @@ public class PulseDispatcher : IDisposable
             _regexHandlersLock.EnterReadLock();
             try
             {
-                foreach ((Regex regex, string version, var handlerFunc, string[] groupNames) in _regexHandlers)
+                foreach ((Regex compiledRegex, string registeredVersion, Func<PulseContext, Task> handlerFunc, string[] groupNames) in _regexHandlers)
                 {
-                    if (!string.Equals(version, versionKey, StringComparison.OrdinalIgnoreCase)) 
+                    if (!string.Equals(registeredVersion, versionKey, StringComparison.OrdinalIgnoreCase))
                         continue;
-                    
-                    Match match = regex.Match(handleKey);
-                    if (!match.Success) continue;
-                    
+
+                    Match match = compiledRegex.Match(handleKey);
+                    if (!match.Success)
+                        continue;
+
                     handler = handlerFunc;
-                    
+
                     foreach (string groupName in groupNames)
                     {
                         Group group = match.Groups[groupName];
                         if (group.Success)
                             parameters[groupName] = group.Value;
                     }
-                    
+
                     break;
                 }
             }
@@ -393,26 +395,26 @@ public class PulseDispatcher : IDisposable
                     CancellationToken.None);
             }
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
             if (envelope.Kind == PulseKind.RPC)
             {
-                (PulseStatus status, string message) = ErrorMapper.MapException(ex);
-            
-                PulseEnvelope<object> errorResponse = new PulseEnvelope<object>
+                (PulseStatus mappedStatus, string mappedMessage) = ErrorMapper.MapException(exception);
+
+                PulseEnvelope<object> errorEnvelope = new PulseEnvelope<object>
                 {
                     Handle = envelope.Handle,
-                    Body = message,
+                    Body = mappedMessage,
                     AuthToken = envelope.AuthToken,
                     Kind = PulseKind.RPC,
                     Version = envelope.Version,
                     ClientCorrelationId = envelope.ClientCorrelationId,
-                    Status = status,
+                    Status = mappedStatus
                 };
 
                 try
                 {
-                    byte[] errorBytes = MsgPackSerdes.Serialize(errorResponse);
+                    byte[] errorBytes = MsgPackSerdes.Serialize(errorEnvelope);
                     await connection.Socket.SendAsync(
                         new ArraySegment<byte>(errorBytes),
                         WebSocketMessageType.Binary,
@@ -424,10 +426,11 @@ public class PulseDispatcher : IDisposable
                     _logger.LogError("Failed to send error response", sendException);
                 }
             }
-        
+
             throw;
         }
     }
+
 
     public void Dispose()
     {

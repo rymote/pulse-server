@@ -1,19 +1,11 @@
-﻿using System;
-using System.Buffers;
-using System.Collections.Generic;
+﻿using System.Buffers;
 using System.Net.WebSockets;
-using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
 using Rymote.Pulse.Core;
 using Rymote.Pulse.Core.Connections;
 using Rymote.Pulse.Core.Logging;
 using Rymote.Pulse.Core.Messages;
-using Rymote.Pulse.Core.Middleware;
-using Rymote.Pulse.Core.Serialization;
 
 namespace Rymote.Pulse.AspNet;
 
@@ -23,10 +15,14 @@ public static class PulseProtocolMiddleware
         this IApplicationBuilder applicationBuilder,
         string websocketPath,
         PulseDispatcher pulseDispatcher,
-        IPulseLogger pulseLogger)
+        IPulseLogger pulseLogger,
+        Action<PulseProtocolOptions>? configureOptionsAction = null)
     {
         ArgumentNullException.ThrowIfNull(pulseLogger);
 
+        PulseProtocolOptions pulseProtocolOptions = new PulseProtocolOptions();
+        configureOptionsAction?.Invoke(pulseProtocolOptions);
+        
         return applicationBuilder.Map(websocketPath, subApplication =>
             {
                 subApplication.Use(async (HttpContext httpContext, Func<Task> nextDelegate) =>
@@ -94,7 +90,8 @@ public static class PulseProtocolMiddleware
                         await HandleSocketAsync(
                             connection,
                             pulseDispatcher,
-                            pulseLogger);
+                            pulseLogger,
+                            pulseProtocolOptions);
                     }
                     catch (Exception middlewareException)
                     {
@@ -140,17 +137,19 @@ public static class PulseProtocolMiddleware
     private static async Task HandleSocketAsync(
         PulseConnection connection,
         PulseDispatcher pulseDispatcher,
-        IPulseLogger pulseLogger)
+        IPulseLogger pulseLogger,
+        PulseProtocolOptions pulseProtocolOptions)
     {
-        const int BufferSizeInBytes = 4096;
-        const int MaxMessageSize = 10 * 1024 * 1024; // 10MB limit
-
+        int bufferSizeInBytes = pulseProtocolOptions.BufferSizeInBytes;
+        int maxMessageSizeInBytes = pulseProtocolOptions.MaxMessageSizeInBytes;
+        
         ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
-        byte[] receiveBuffer = arrayPool.Rent(BufferSizeInBytes);
+        byte[] receiveBuffer = arrayPool.Rent(bufferSizeInBytes);
 
-        byte[] messageAssemblyBuffer = arrayPool.Rent(MaxMessageSize);
+        byte[] messageAssemblyBuffer = arrayPool.Rent(maxMessageSizeInBytes);
 
-        ArraySegment<byte>[] messageSegments = new ArraySegment<byte>[256];
+        int maximumSegments = (maxMessageSizeInBytes + bufferSizeInBytes - 1) / bufferSizeInBytes;
+        ArraySegment<byte>[] messageSegments = new ArraySegment<byte>[maximumSegments];
         int segmentCount = 0;
         int totalMessageSize = 0;
 
@@ -194,9 +193,9 @@ public static class PulseProtocolMiddleware
                 {
                     totalMessageSize += receiveResult.Count;
 
-                    if (totalMessageSize > MaxMessageSize)
+                    if (totalMessageSize > maxMessageSizeInBytes)
                     {
-                        pulseLogger.LogError($"Message size exceeds maximum allowed size of {MaxMessageSize} bytes");
+                        pulseLogger.LogError($"Message size exceeds maximum allowed size of {maxMessageSizeInBytes} bytes");
 
                         for (int index = 0; index < segmentCount; index++)
                             arrayPool.Return(messageSegments[index].Array!);
