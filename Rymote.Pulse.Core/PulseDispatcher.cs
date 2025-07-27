@@ -379,16 +379,53 @@ public class PulseDispatcher : IDisposable
             }
         };
 
-        await _pipeline.ExecuteAsync(context, handler);
-
-        if (context.TypedResponseEnvelope != null)
+        try
         {
-            byte[] responseBytes = MsgPackSerdes.Serialize(context.TypedResponseEnvelope);
-            await connection.Socket.SendAsync(
-                new ArraySegment<byte>(responseBytes),
-                WebSocketMessageType.Binary,
-                true,
-                CancellationToken.None);
+            await _pipeline.ExecuteAsync(context, handler);
+
+            if (context.TypedResponseEnvelope != null)
+            {
+                byte[] responseBytes = MsgPackSerdes.Serialize((dynamic)context.TypedResponseEnvelope);
+                await connection.Socket.SendAsync(
+                    new ArraySegment<byte>(responseBytes),
+                    WebSocketMessageType.Binary,
+                    true,
+                    CancellationToken.None);
+            }
+        }
+        catch (Exception ex)
+        {
+            if (envelope.Kind == PulseKind.RPC)
+            {
+                (PulseStatus status, string message) = ErrorMapper.MapException(ex);
+            
+                PulseEnvelope<object> errorResponse = new PulseEnvelope<object>
+                {
+                    Handle = envelope.Handle,
+                    Body = message,
+                    AuthToken = envelope.AuthToken,
+                    Kind = PulseKind.RPC,
+                    Version = envelope.Version,
+                    ClientCorrelationId = envelope.ClientCorrelationId,
+                    Status = status,
+                };
+
+                try
+                {
+                    byte[] errorBytes = MsgPackSerdes.Serialize(errorResponse);
+                    await connection.Socket.SendAsync(
+                        new ArraySegment<byte>(errorBytes),
+                        WebSocketMessageType.Binary,
+                        true,
+                        CancellationToken.None);
+                }
+                catch (Exception sendException)
+                {
+                    _logger.LogError("Failed to send error response", sendException);
+                }
+            }
+        
+            throw;
         }
     }
 
