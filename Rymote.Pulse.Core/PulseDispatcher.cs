@@ -33,13 +33,8 @@ public class PulseDispatcher : IDisposable
 
     private readonly IPulseLogger _logger;
     private readonly PulseMiddlewarePipeline _pipeline;
-    private readonly ConcurrentDictionary<string, (Channel<byte[]> Channel, DateTime LastActivity)> _inboundStreams;
-    private readonly Timer _cleanupTimer;
-
-    private readonly List<(HandlePattern HandlePattern, string Version, Func<PulseContext, Task> Handler)> _handlers;
 
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, Func<PulseContext, Task>>> _fastHandlers;
-
     private readonly List<(Regex CompiledRegex, string Version, Func<PulseContext, Task> Handler, string[] GroupNames)>
         _regexHandlers;
 
@@ -50,8 +45,7 @@ public class PulseDispatcher : IDisposable
         ConnectionManager = connectionManager;
 
         _logger = logger;
-        _handlers = new List<(HandlePattern HandlePattern, string Version, Func<PulseContext, Task> Handler)>();
-
+        
         _fastHandlers =
             new ConcurrentDictionary<string, ConcurrentDictionary<string, Func<PulseContext, Task>>>(StringComparer
                 .OrdinalIgnoreCase);
@@ -59,26 +53,6 @@ public class PulseDispatcher : IDisposable
         _regexHandlersLock = new ReaderWriterLockSlim();
 
         _pipeline = new PulseMiddlewarePipeline();
-        _inboundStreams = new ConcurrentDictionary<string, (Channel<byte[]>, DateTime)>();
-        _cleanupTimer = new Timer(CleanupAbandonedStreams, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
-    }
-
-    private void CleanupAbandonedStreams(object? state)
-    {
-        DateTime cutoffTime = DateTime.UtcNow.AddMinutes(-5);
-        List<string> keysToRemove = _inboundStreams
-            .Where(keyValuePair => keyValuePair.Value.LastActivity < cutoffTime)
-            .Select(keyValuePair => keyValuePair.Key)
-            .ToList();
-
-        foreach (string key in keysToRemove)
-        {
-            if (!_inboundStreams.TryRemove(key, out (Channel<byte[]> Channel, DateTime LastActivity) streamInfo))
-                continue;
-
-            streamInfo.Channel.Writer.TryComplete();
-            _logger?.LogInfo($"Cleaned up abandoned stream: {key}");
-        }
     }
 
     public void AddOnConnectHandler(Func<PulseConnection, Task> handler)
@@ -109,7 +83,7 @@ public class PulseDispatcher : IDisposable
 
     public async Task ExecuteOnDisconnectHandlersAsync(PulseConnection connection)
     {
-        foreach (var handler in _onDisconnectHandlers)
+        foreach (Func<PulseConnection, Task> handler in _onDisconnectHandlers)
         {
             try
             {
@@ -334,14 +308,6 @@ public class PulseDispatcher : IDisposable
 
     public void Dispose()
     {
-        _cleanupTimer?.Dispose();
         _regexHandlersLock?.Dispose();
-
-        foreach (KeyValuePair<string, (Channel<byte[]> Channel, DateTime LastActivity)> keyValuePair in _inboundStreams)
-        {
-            keyValuePair.Value.Channel.Writer.TryComplete();
-        }
-
-        _inboundStreams.Clear();
     }
 }

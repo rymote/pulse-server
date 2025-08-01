@@ -8,7 +8,10 @@ namespace Rymote.Pulse.Core.Serialization;
 
 public static class MsgPackSerdes
 {
-    private const int PREFIX_LENGTH = 13;
+    private const int NONCE_LENGTH = 12;
+    private const int TAG_LENGTH = 16;
+    private const int PREFIX_LENGTH = NONCE_LENGTH;
+
     private static readonly int BUFFER_WRITER_POOL_SIZE = Environment.ProcessorCount * 2;
 
     private static readonly MessagePackSerializerOptions _options =
@@ -25,13 +28,13 @@ public static class MsgPackSerdes
                 DynamicObjectResolver.Instance,
                 ContractlessStandardResolver.Instance
             ));
-    
+
     private static readonly ConcurrentQueue<RandomNumberGenerator> _randomNumberGeneratorPool = new();
-    private static readonly ThreadLocal<RandomNumberGenerator> _threadLocalRng = 
+    private static readonly ThreadLocal<RandomNumberGenerator> _threadLocalRng =
         new(() => GetOrCreateRng(), trackAllValues: false);
-    
+
     private static readonly ConcurrentQueue<ArrayBufferWriter<byte>> _bufferWriterPool = new();
-    private static readonly ArrayPool<byte> _arrayPool = ArrayPool<byte>.Shared;
+    private static readonly byte[] _key = Convert.FromHexString("f3b4d89e3a6c2b75a1ee4c6d90f8a2134dd89e3aa1bc67423ff4b62184ce93de");
 
     static MsgPackSerdes()
     {
@@ -44,14 +47,16 @@ public static class MsgPackSerdes
 
     private static RandomNumberGenerator GetOrCreateRng()
     {
-        return _randomNumberGeneratorPool.TryDequeue(out RandomNumberGenerator? randomNumberGenerator) ? randomNumberGenerator : RandomNumberGenerator.Create();
+        return _randomNumberGeneratorPool.TryDequeue(out RandomNumberGenerator? generator)
+            ? generator
+            : RandomNumberGenerator.Create();
     }
 
     private static ArrayBufferWriter<byte> GetBufferWriter()
     {
-        if (!_bufferWriterPool.TryDequeue(out ArrayBufferWriter<byte>? writer)) 
+        if (!_bufferWriterPool.TryDequeue(out ArrayBufferWriter<byte>? writer))
             return new ArrayBufferWriter<byte>();
-        
+
         writer.Clear();
         return writer;
     }
@@ -59,7 +64,7 @@ public static class MsgPackSerdes
     private static void ReturnBufferWriter(ArrayBufferWriter<byte> writer)
     {
         if (_bufferWriterPool.Count >= BUFFER_WRITER_POOL_SIZE) return;
-        
+
         writer.Clear();
         _bufferWriterPool.Enqueue(writer);
     }
@@ -67,20 +72,27 @@ public static class MsgPackSerdes
     public static byte[] Serialize<T>(T obj)
     {
         ArrayBufferWriter<byte> bufferWriter = GetBufferWriter();
-        
+
         try
         {
             MessagePackSerializer.Serialize(bufferWriter, obj, _options);
-            
-            ReadOnlySpan<byte> serializedData = bufferWriter.WrittenSpan;
-            int totalLength = PREFIX_LENGTH + serializedData.Length;
-            
-            byte[] result = new byte[totalLength];
-            
-            _threadLocalRng.Value!.GetBytes(result.AsSpan(0, PREFIX_LENGTH));
-            
-            serializedData.CopyTo(result.AsSpan(PREFIX_LENGTH));
-            
+
+            ReadOnlySpan<byte> plaintext = bufferWriter.WrittenSpan;
+
+            Span<byte> nonce = stackalloc byte[NONCE_LENGTH];
+            _threadLocalRng.Value!.GetBytes(nonce);
+
+            byte[] ciphertext = new byte[plaintext.Length];
+            Span<byte> tag = stackalloc byte[TAG_LENGTH];
+
+            using ChaCha20Poly1305 cipher = new ChaCha20Poly1305(_key);
+            cipher.Encrypt(nonce, plaintext, ciphertext, tag);
+
+            byte[] result = new byte[NONCE_LENGTH + TAG_LENGTH + ciphertext.Length];
+            nonce.CopyTo(result.AsSpan(0, NONCE_LENGTH));
+            ciphertext.CopyTo(result.AsSpan(NONCE_LENGTH));
+            tag.CopyTo(result.AsSpan(NONCE_LENGTH + ciphertext.Length));
+
             return result;
         }
         finally
@@ -91,30 +103,44 @@ public static class MsgPackSerdes
 
     public static T Deserialize<T>(byte[] data)
     {
-        if (data.Length <= PREFIX_LENGTH)
+        if (data.Length <= NONCE_LENGTH + TAG_LENGTH)
             throw new ArgumentException("Frame too short", nameof(data));
 
-        ReadOnlyMemory<byte> payload = data.AsMemory(PREFIX_LENGTH);
-        return MessagePackSerializer.Deserialize<T>(payload, _options);
+        ReadOnlySpan<byte> nonce = data.AsSpan(0, NONCE_LENGTH);
+        ReadOnlySpan<byte> tag = data.AsSpan(data.Length - TAG_LENGTH, TAG_LENGTH);
+        ReadOnlySpan<byte> ciphertext = data.AsSpan(NONCE_LENGTH, data.Length - NONCE_LENGTH - TAG_LENGTH);
+
+        byte[] plaintext = new byte[ciphertext.Length];
+
+        using ChaCha20Poly1305 cipher = new ChaCha20Poly1305(_key);
+        cipher.Decrypt(nonce, ciphertext, tag, plaintext);
+
+        return MessagePackSerializer.Deserialize<T>(plaintext, _options);
     }
 
-    public static unsafe int SerializeToSpan<T>(T obj, Span<byte> destination)
+    public static int SerializeToSpan<T>(T obj, Span<byte> destination)
     {
         ArrayBufferWriter<byte> bufferWriter = GetBufferWriter();
-        
+
         try
         {
             MessagePackSerializer.Serialize(bufferWriter, obj, _options);
-            
-            ReadOnlySpan<byte> serializedData = bufferWriter.WrittenSpan;
-            int totalLength = PREFIX_LENGTH + serializedData.Length;
-            
+
+            ReadOnlySpan<byte> plaintext = bufferWriter.WrittenSpan;
+
+            int totalLength = NONCE_LENGTH + TAG_LENGTH + plaintext.Length;
             if (destination.Length < totalLength)
                 return -totalLength;
-            
-            _threadLocalRng.Value!.GetBytes(destination.Slice(0, PREFIX_LENGTH));
-            serializedData.CopyTo(destination.Slice(PREFIX_LENGTH));
-            
+
+            Span<byte> nonce = destination.Slice(0, NONCE_LENGTH);
+            _threadLocalRng.Value!.GetBytes(nonce);
+
+            Span<byte> ciphertext = destination.Slice(NONCE_LENGTH, plaintext.Length);
+            Span<byte> tag = destination.Slice(NONCE_LENGTH + plaintext.Length, TAG_LENGTH);
+
+            using var cipher = new ChaCha20Poly1305(_key);
+            cipher.Encrypt(nonce, plaintext, ciphertext, tag);
+
             return totalLength;
         }
         finally
