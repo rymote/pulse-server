@@ -91,10 +91,10 @@ public class PulseGroup : IDisposable
             if (!_membersCacheInvalid && _cachedActiveMembers != null)
                 return _cachedActiveMembers;
 
-            var activeMembers = ImmutableList.CreateBuilder<PulseConnection>();
-            var toRemove = new List<string>();
+            ImmutableList<PulseConnection>.Builder activeMembers = ImmutableList.CreateBuilder<PulseConnection>();
+            List<string> toRemove = new List<string>();
 
-            foreach (var keyValuePair in _members)
+            foreach (KeyValuePair<string, PulseConnection> keyValuePair in _members)
             {
                 if (_failedConnections.ContainsKey(keyValuePair.Key))
                 {

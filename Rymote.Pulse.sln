@@ -1,5 +1,4 @@
-﻿
-Microsoft Visual Studio Solution File, Format Version 12.00
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Rymote.Pulse.Core", "Rymote.Pulse.Core\Rymote.Pulse.Core.csproj", "{B5E64076-83AE-43A9-9669-12D8D4D262FA}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Rymote.Pulse.AspNet", "Rymote.Pulse.AspNet\Rymote.Pulse.AspNet.csproj", "{6F0BC7E9-486A-44CC-AAE6-E77BB08C8600}"

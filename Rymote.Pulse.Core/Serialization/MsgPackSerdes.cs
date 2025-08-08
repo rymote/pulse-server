@@ -138,7 +138,7 @@ public static class MsgPackSerdes
             Span<byte> ciphertext = destination.Slice(NONCE_LENGTH, plaintext.Length);
             Span<byte> tag = destination.Slice(NONCE_LENGTH + plaintext.Length, TAG_LENGTH);
 
-            using var cipher = new ChaCha20Poly1305(_key);
+            using ChaCha20Poly1305 cipher = new ChaCha20Poly1305(_key);
             cipher.Encrypt(nonce, plaintext, ciphertext, tag);
 
             return totalLength;

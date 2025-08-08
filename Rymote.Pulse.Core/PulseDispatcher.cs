@@ -211,7 +211,7 @@ public class PulseDispatcher : IDisposable
         Func<PulseContext, Task>? handler = null;
         Dictionary<string, string> parameters = new Dictionary<string, string>();
 
-        if (_fastHandlers.TryGetValue(versionKey, out var versionHandlers) &&
+        if (_fastHandlers.TryGetValue(versionKey, out ConcurrentDictionary<string, Func<PulseContext, Task>>? versionHandlers) &&
             versionHandlers.TryGetValue(handleKey, out handler))
         {
             // exact hit
