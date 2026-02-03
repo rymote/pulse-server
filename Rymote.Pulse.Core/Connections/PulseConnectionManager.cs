@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net.WebSockets;
 using System.Threading.Tasks;
@@ -51,7 +51,7 @@ public class PulseConnectionManager
         
         foreach (string groupName in groupsToCheck)
             if (_groups.TryRemove(groupName, out PulseGroup? group) && !group.Members.Any())
-                _logger?.LogInfo($"Removed empty group: {groupName}");
+                _logger?.LogDebug($"Removed empty group: {groupName}");
 
         if (_clusterStore != null)
             await _clusterStore.RemoveConnectionAsync(connectionId);
@@ -121,7 +121,7 @@ public class PulseConnectionManager
             group.Remove(connectionId);
             
             if (!group.Members.Any() && _groups.TryRemove(groupName, out _))
-                _logger?.LogInfo($"Removed empty group: {groupName}");
+                _logger?.LogDebug($"Removed empty group: {groupName}");
         }
 
         if (_clusterStore != null)
@@ -135,7 +135,7 @@ public class PulseConnectionManager
             group.Remove(connection.ConnectionId);
             
             if (!group.Members.Any() && _groups.TryRemove(groupName, out _))
-                _logger?.LogInfo($"Removed empty group: {groupName}");
+                _logger?.LogDebug($"Removed empty group: {groupName}");
         }
 
         if (_clusterStore != null)

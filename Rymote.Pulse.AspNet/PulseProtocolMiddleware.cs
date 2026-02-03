@@ -1,4 +1,4 @@
-﻿using System.Buffers;
+using System.Buffers;
 using System.Net.WebSockets;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -66,7 +66,7 @@ public static class PulseProtocolMiddleware
 
                     if (!string.IsNullOrEmpty(forwardedFor))
                     {
-                        pulseLogger.LogInfo($"[{connectionId}] Connection forwarded through: {forwardedFor}");
+                        pulseLogger.LogDebug($"[{connectionId}] Connection forwarded through: {forwardedFor}");
                     }
 
                     try
@@ -183,7 +183,7 @@ public static class PulseProtocolMiddleware
 
                 if (receiveResult.MessageType == WebSocketMessageType.Close)
                 {
-                    pulseLogger.LogInfo(
+                    pulseLogger.LogDebug(
                         $"Client initiated close. Status: {receiveResult.CloseStatus}, " +
                         $"Description: {receiveResult.CloseStatusDescription}");
                     break;
@@ -302,7 +302,7 @@ public static class PulseProtocolMiddleware
                 {
                     await pulseDispatcher.ConnectionManager.DisconnectAsync(connection,
                         WebSocketCloseStatus.NormalClosure, "Server is closing the connection", CancellationToken.None);
-                    pulseLogger.LogInfo("Connection closed cleanly by server");
+                    pulseLogger.LogDebug("Connection closed cleanly by server");
                 }
                 catch (Exception closeException)
                 {
