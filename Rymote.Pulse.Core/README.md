@@ -257,7 +257,7 @@ Implement custom serialization by modifying `MsgPackSerdes` or creating your own
 
 ## Dependencies
 
-- .NET 9.0 or later
+- .NET 10.0 or later
 - MessagePack-CSharp (2.5.187)
 - System.Threading.Channels
 
