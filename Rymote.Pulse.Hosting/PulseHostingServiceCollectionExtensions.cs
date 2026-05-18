@@ -1,6 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Hosting;
 using Rymote.Pulse.Core;
 using Rymote.Pulse.Core.Cluster;
 using Rymote.Pulse.Core.Connections;
@@ -10,14 +9,9 @@ namespace Rymote.Pulse.Hosting;
 
 public static class PulseHostingServiceCollectionExtensions
 {
-    public static IServiceCollection AddPulse(
-        this IServiceCollection serviceCollection,
-        Action<PulseHostingOptions> configureOptionsAction)
+    public static IPulseBuilder AddPulse(this IServiceCollection serviceCollection)
     {
         ArgumentNullException.ThrowIfNull(serviceCollection);
-        ArgumentNullException.ThrowIfNull(configureOptionsAction);
-
-        serviceCollection.Configure(configureOptionsAction);
 
         serviceCollection.TryAddSingleton<IPulseLogger>(_ => new PulseConsoleLogger(enableDebugLogs: false));
 
@@ -35,8 +29,6 @@ public static class PulseHostingServiceCollectionExtensions
             return new PulseDispatcher(connectionManager, logger);
         });
 
-        serviceCollection.AddHostedService<PulseHostedService>();
-
-        return serviceCollection;
+        return new PulseBuilder(serviceCollection);
     }
 }

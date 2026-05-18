@@ -1,9 +1,5 @@
-﻿using System.Buffers;
-using System.Collections.Concurrent;
-using System.Net.WebSockets;
-using System.Threading.Channels;
+﻿using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
-using MessagePack;
 using Rymote.Pulse.Core.Connections;
 using Rymote.Pulse.Core.Exceptions;
 using Rymote.Pulse.Core.Logging;
@@ -246,14 +242,7 @@ public class PulseDispatcher : IDisposable
 
         PulseContext context = new PulseContext(ConnectionManager, connection, rawData, _logger, parameters)
         {
-            SendChunkAsync = async bytes =>
-            {
-                await connection.Socket.SendAsync(
-                    new ArraySegment<byte>(bytes),
-                    WebSocketMessageType.Binary,
-                    true,
-                    CancellationToken.None);
-            }
+            SendChunkAsync = bytes => connection.SendAsync(bytes, CancellationToken.None).AsTask()
         };
 
         try
@@ -263,11 +252,7 @@ public class PulseDispatcher : IDisposable
             if (context.TypedResponseEnvelope != null)
             {
                 byte[] responseBytes = MsgPackSerdes.Serialize((dynamic)context.TypedResponseEnvelope);
-                await connection.Socket.SendAsync(
-                    new ArraySegment<byte>(responseBytes),
-                    WebSocketMessageType.Binary,
-                    true,
-                    CancellationToken.None);
+                await connection.SendAsync(responseBytes, CancellationToken.None);
             }
         }
         catch (Exception exception)
@@ -289,11 +274,7 @@ public class PulseDispatcher : IDisposable
                 try
                 {
                     byte[] errorBytes = MsgPackSerdes.Serialize(errorEnvelope);
-                    await connection.Socket.SendAsync(
-                        new ArraySegment<byte>(errorBytes),
-                        WebSocketMessageType.Binary,
-                        true,
-                        CancellationToken.None);
+                    await connection.SendAsync(errorBytes, CancellationToken.None);
                 }
                 catch (Exception sendException)
                 {

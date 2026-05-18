@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+
+        <PackageId>Rymote.Pulse.Transports.RawTcp</PackageId>
+        <Authors>Rymote</Authors>
+        <Description>Raw TCP transport for Rymote.Pulse (length-prefix framing, optional TLS)</Description>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Rymote.Pulse.Core\Rymote.Pulse.Core.csproj" />
+      <ProjectReference Include="..\Rymote.Pulse.Hosting\Rymote.Pulse.Hosting.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
+      <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+      <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
+    </ItemGroup>
+
+</Project>

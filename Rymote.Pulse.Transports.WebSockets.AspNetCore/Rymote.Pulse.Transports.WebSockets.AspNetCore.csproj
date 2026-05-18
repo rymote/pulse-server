@@ -1,13 +1,13 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
 
-        <PackageId>Rymote.Pulse.AspNet</PackageId>
+        <PackageId>Rymote.Pulse.Transports.WebSockets.AspNetCore</PackageId>
         <Authors>Rymote</Authors>
-        <Description>ASP.NET integration for Rymote.Pulse</Description>
+        <Description>ASP.NET Core WebSocket transport for Rymote.Pulse</Description>
     </PropertyGroup>
 
     <ItemGroup>

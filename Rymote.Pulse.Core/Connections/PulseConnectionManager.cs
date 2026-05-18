@@ -1,10 +1,7 @@
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Net.WebSockets;
-using System.Threading.Tasks;
 using Rymote.Pulse.Core.Cluster;
-using Rymote.Pulse.Core.Connections;
 using Rymote.Pulse.Core.Logging;
+using Rymote.Pulse.Core.Transport;
 
 namespace Rymote.Pulse.Core.Connections;
 
@@ -12,25 +9,30 @@ public class PulseConnectionManager
 {
     private readonly ConcurrentDictionary<string, PulseConnection> _connections = new();
     private readonly ConcurrentDictionary<string, PulseGroup> _groups = new();
-    
+
     private readonly IPulseClusterStore? _clusterStore;
     private readonly string _nodeId;
     private readonly IPulseLogger? _logger;
 
-    public PulseConnectionManager(IPulseClusterStore? clusterStore = null, string? nodeId = null, IPulseLogger? logger = null)
+    public PulseConnectionManager(
+        IPulseClusterStore? clusterStore = null,
+        string? nodeId = null,
+        IPulseLogger? logger = null)
     {
         _clusterStore = clusterStore;
         _nodeId = nodeId ?? Environment.MachineName;
         _logger = logger;
     }
 
-    public async Task<PulseConnection> AddConnectionAsync(string connectionId, WebSocket socket, IDictionary<string, string>? queryParameters = null)
+    public async Task<PulseConnection> AddConnectionAsync(IPulseTransportConnection transportConnection)
     {
-        PulseConnection connection = new PulseConnection(connectionId, socket, _nodeId, queryParameters);
-        _connections[connectionId] = connection;
+        ArgumentNullException.ThrowIfNull(transportConnection);
+
+        PulseConnection connection = new PulseConnection(transportConnection, _nodeId);
+        _connections[connection.ConnectionId] = connection;
 
         if (_clusterStore != null)
-            await _clusterStore.AddConnectionAsync(connectionId, _nodeId);
+            await _clusterStore.AddConnectionAsync(connection.ConnectionId, _nodeId);
 
         return connection;
     }
@@ -38,17 +40,17 @@ public class PulseConnectionManager
     public async Task RemoveConnectionAsync(string connectionId)
     {
         if (_connections.TryRemove(connectionId, out PulseConnection? connection))
-            connection.Dispose();
+            await connection.DisposeAsync();
 
         List<string> groupsToCheck = [];
-        
+
         foreach (KeyValuePair<string, PulseGroup> keyValuePair in _groups)
         {
             keyValuePair.Value.Remove(connectionId);
             if (!keyValuePair.Value.Members.Any())
                 groupsToCheck.Add(keyValuePair.Key);
         }
-        
+
         foreach (string groupName in groupsToCheck)
             if (_groups.TryRemove(groupName, out PulseGroup? group) && !group.Members.Any())
                 _logger?.LogDebug($"Removed empty group: {groupName}");
@@ -62,39 +64,38 @@ public class PulseConnectionManager
 
     public PulseGroup GetOrCreateGroup(string groupName)
         => _groups.GetOrAdd(groupName, _ => new PulseGroup(groupName));
-    
+
     public async Task DisconnectAsync(
-        string connectionId, 
-        WebSocketCloseStatus closeStatus = WebSocketCloseStatus.NormalClosure,
-        string? statusDescription = null,
+        string connectionId,
+        int closeCode = 1000,
+        string? reason = null,
         CancellationToken cancellationToken = default)
     {
         PulseConnection? connection = GetConnection(connectionId);
-        
         if (connection != null)
-            await DisconnectAsync(connection, closeStatus, statusDescription, cancellationToken);
+            await DisconnectAsync(connection, closeCode, reason, cancellationToken);
     }
-    
+
     public async Task DisconnectAsync(
         PulseConnection connection,
-        WebSocketCloseStatus closeStatus = WebSocketCloseStatus.NormalClosure,
-        string? statusDescription = null,
+        int closeCode = 1000,
+        string? reason = null,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            await connection.DisconnectAsync(closeStatus, statusDescription, cancellationToken);
+            await connection.DisconnectAsync(closeCode, reason, cancellationToken);
         }
-        catch (Exception exception)
+        catch (Exception disconnectException)
         {
-            _logger?.LogError($"Error disconnecting connection {connection.ConnectionId}", exception);
+            _logger?.LogError($"Error disconnecting connection {connection.ConnectionId}", disconnectException);
         }
         finally
         {
             await RemoveConnectionAsync(connection.ConnectionId);
         }
     }
-    
+
     public async Task AddToGroupAsync(string groupName, string connectionId)
     {
         if (_connections.TryGetValue(connectionId, out PulseConnection? connection))
@@ -119,7 +120,7 @@ public class PulseConnectionManager
         else if (_groups.TryGetValue(groupName, out PulseGroup? group))
         {
             group.Remove(connectionId);
-            
+
             if (!group.Members.Any() && _groups.TryRemove(groupName, out _))
                 _logger?.LogDebug($"Removed empty group: {groupName}");
         }
@@ -133,7 +134,7 @@ public class PulseConnectionManager
         if (_groups.TryGetValue(groupName, out PulseGroup? group))
         {
             group.Remove(connection.ConnectionId);
-            
+
             if (!group.Members.Any() && _groups.TryRemove(groupName, out _))
                 _logger?.LogDebug($"Removed empty group: {groupName}");
         }
@@ -141,7 +142,7 @@ public class PulseConnectionManager
         if (_clusterStore != null)
             await _clusterStore.RemoveFromGroupAsync(groupName, connection.ConnectionId);
     }
-    
+
     public async Task<IEnumerable<string>> GetAllConnectionIdsAsync()
     {
         if (_clusterStore == null) return _connections.Keys;

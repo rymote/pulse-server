@@ -1,9 +1,8 @@
 using System.Net;
-using Rymote.Pulse.Core.Transport;
 
-namespace Rymote.Pulse.Hosting;
+namespace Rymote.Pulse.Transports.WebSockets.HttpListener;
 
-public class PulseHostingOptions : IPulseSocketLoopOptions
+public class WebSocketHttpListenerTransportOptions
 {
     public IList<string> Prefixes { get; } = new List<string>();
     public int BufferSizeInBytes { get; set; } = 4 * 1024;
@@ -16,22 +15,22 @@ public class PulseHostingOptions : IPulseSocketLoopOptions
     {
         if (Prefixes.Count == 0)
             throw new InvalidOperationException(
-                $"{nameof(PulseHostingOptions)}.{nameof(Prefixes)} must contain at least one HTTP prefix (e.g. \"http://+:8080/pulse/\").");
+                $"{nameof(WebSocketHttpListenerTransportOptions)}.{nameof(Prefixes)} must contain at least one HTTP prefix (e.g. \"http://+:8080/pulse/\").");
 
         if (BufferSizeInBytes <= 0)
             throw new InvalidOperationException(
-                $"{nameof(PulseHostingOptions)}.{nameof(BufferSizeInBytes)} must be greater than zero.");
+                $"{nameof(WebSocketHttpListenerTransportOptions)}.{nameof(BufferSizeInBytes)} must be greater than zero.");
 
         if (MaxMessageSizeInBytes < BufferSizeInBytes)
             throw new InvalidOperationException(
-                $"{nameof(PulseHostingOptions)}.{nameof(MaxMessageSizeInBytes)} must be greater than or equal to {nameof(BufferSizeInBytes)}.");
+                $"{nameof(WebSocketHttpListenerTransportOptions)}.{nameof(MaxMessageSizeInBytes)} must be greater than or equal to {nameof(BufferSizeInBytes)}.");
 
         if (MaxConcurrentConnections is <= 0)
             throw new InvalidOperationException(
-                $"{nameof(PulseHostingOptions)}.{nameof(MaxConcurrentConnections)} must be greater than zero when set.");
+                $"{nameof(WebSocketHttpListenerTransportOptions)}.{nameof(MaxConcurrentConnections)} must be greater than zero when set.");
 
         if (ShutdownDrainTimeout < TimeSpan.Zero)
             throw new InvalidOperationException(
-                $"{nameof(PulseHostingOptions)}.{nameof(ShutdownDrainTimeout)} cannot be negative.");
+                $"{nameof(WebSocketHttpListenerTransportOptions)}.{nameof(ShutdownDrainTimeout)} cannot be negative.");
     }
 }

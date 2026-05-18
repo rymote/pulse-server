@@ -1,42 +1,44 @@
-﻿using System.Collections.Concurrent;
-using System.Net.WebSockets;
 using Rymote.Pulse.Core.Messages;
 using Rymote.Pulse.Core.Metadata;
 using Rymote.Pulse.Core.Serialization;
+using Rymote.Pulse.Core.Transport;
 
 namespace Rymote.Pulse.Core.Connections;
 
-public class PulseConnection : IDisposable
+public class PulseConnection : IAsyncDisposable, IDisposable
 {
     public string ConnectionId { get; }
-    public WebSocket Socket { get; }
     public string NodeId { get; }
     public PulseMetadata Metadata { get; }
-    private readonly IReadOnlyDictionary<string, string> _queryParameters;
-    public IReadOnlyDictionary<string, string> QueryParameters => _queryParameters;
+    public IReadOnlyDictionary<string, string> QueryParameters { get; }
+
+    public bool IsOpen => _transportConnection.IsOpen;
+    public string TransportName => _transportConnection.TransportName;
+
+    internal IPulseTransportConnection TransportConnection => _transportConnection;
+    private readonly IPulseTransportConnection _transportConnection;
+
     private bool _disposed;
-    
-    public PulseConnection(string connectionId, WebSocket socket, string nodeId, IDictionary<string, string>? queryParameters = null)
+
+    public PulseConnection(IPulseTransportConnection transportConnection, string nodeId)
     {
-        ConnectionId = connectionId;
-        Socket = socket;
+        ArgumentNullException.ThrowIfNull(transportConnection);
+
+        _transportConnection = transportConnection;
+        ConnectionId = transportConnection.ConnectionId;
+        QueryParameters = transportConnection.QueryParameters;
         NodeId = nodeId;
         Metadata = new PulseMetadata();
-        
-        _queryParameters = queryParameters != null 
-            ? new Dictionary<string, string>(queryParameters) 
-            : new Dictionary<string, string>();
     }
 
-    public bool IsOpen => Socket.State == WebSocketState.Open;
+    public ValueTask SendAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken = default)
+        => _transportConnection.SendMessageAsync(payload, cancellationToken);
 
-    
     public async Task SendEventAsync<TPayload>(
         string handle,
         TPayload data,
         string version = "v1",
-        CancellationToken cancellationToken = default
-    ) 
+        CancellationToken cancellationToken = default)
     {
         PulseEnvelope<TPayload> envelope = new PulseEnvelope<TPayload>
         {
@@ -47,15 +49,14 @@ public class PulseConnection : IDisposable
         };
 
         byte[] envelopeBytes = MsgPackSerdes.Serialize(envelope);
-        await SendAsync(envelopeBytes, cancellationToken);
+        await SendAsync(envelopeBytes, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SendEventAsync(
         string handle,
         object data,
         string version = "v1",
-        CancellationToken cancellationToken = default
-    )
+        CancellationToken cancellationToken = default)
     {
         PulseEnvelope<object> envelope = new PulseEnvelope<object>
         {
@@ -66,29 +67,15 @@ public class PulseConnection : IDisposable
         };
 
         byte[] envelopeBytes = MsgPackSerdes.Serialize(envelope);
-        await SendAsync(envelopeBytes, cancellationToken);
+        await SendAsync(envelopeBytes, cancellationToken).ConfigureAwait(false);
     }
-    
-    public Task SendAsync(byte[] payload, CancellationToken cancellationToken = default)
-        => Socket.SendAsync(
-            new ArraySegment<byte>(payload),
-            WebSocketMessageType.Binary,
-            endOfMessage: true,
-            cancellationToken: cancellationToken
-        );
-    
-    internal async Task DisconnectAsync(
-        WebSocketCloseStatus closeStatus = WebSocketCloseStatus.NormalClosure, 
-        string? statusDescription = null,
+
+    internal ValueTask DisconnectAsync(
+        int closeCode,
+        string? reason = null,
         CancellationToken cancellationToken = default)
-    {
-        if (Socket.State == WebSocketState.Open || Socket.State == WebSocketState.CloseReceived)
-            await Socket.CloseAsync(
-                closeStatus,
-                statusDescription ?? "Connection closed by server",
-                cancellationToken);
-    }
-    
+        => _transportConnection.CloseAsync(closeCode, reason, cancellationToken);
+
     public void SetMetadata(string key, object value)
     {
         Metadata.SetAsync(key, value).GetAwaiter().GetResult();
@@ -103,24 +90,29 @@ public class PulseConnection : IDisposable
     {
         return Metadata.RemoveAsync(key).GetAwaiter().GetResult();
     }
-    
+
     public string? GetQueryParameter(string key)
     {
-        return _queryParameters.GetValueOrDefault(key);
+        return QueryParameters.GetValueOrDefault(key);
     }
-    
+
     public bool TryGetQueryParameter(string key, out string? value)
     {
-        return _queryParameters.TryGetValue(key, out value);
+        return QueryParameters.TryGetValue(key, out value);
     }
-    
-    
-    public void Dispose()
+
+    public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
-        
         _disposed = true;
-        Metadata?.Dispose();
+
+        Metadata.Dispose();
+        await _transportConnection.DisposeAsync().ConfigureAwait(false);
         GC.SuppressFinalize(this);
+    }
+
+    public void Dispose()
+    {
+        DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 }
