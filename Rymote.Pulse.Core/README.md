@@ -9,7 +9,7 @@ Rymote.Pulse.Core contains the essential components for building real-time messa
 - Message dispatching and routing
 - Protocol implementation
 - Middleware pipeline
-- Serialization infrastructure
+- Serialization infrastructure (MessagePack + ChaCha20-Poly1305 AEAD framing)
 - Clustering abstractions
 
 ## Installation
@@ -27,21 +27,24 @@ The central message router that handles incoming messages and routes them to app
 ```csharp
 var dispatcher = new PulseDispatcher(connectionManager, logger);
 
-// Map RPC handler
-dispatcher.MapRpc<RequestType, ResponseType>("handle.name", 
+// Map RPC handler (request + response)
+dispatcher.MapRpc<RequestType, ResponseType>("handle.name",
     async (request, context) => new ResponseType { /* ... */ });
 
-// Map streaming handler
-dispatcher.MapRpcStream<RequestType, ResponseType>("stream.name",
-    async function* (request, context) 
+// Map RPC handler (response-only — for routes with parameters)
+dispatcher.MapRpc<ResponseType>("items.{itemId}.get",
+    async context =>
     {
-        yield return new ResponseType { /* ... */ };
+        var itemId = context.GetRequiredParameter<string>("itemId");
+        return new ResponseType { /* ... */ };
     });
 
 // Map event handler
 dispatcher.MapEvent<EventType>("event.name",
     async (eventData, context) => { /* ... */ });
 ```
+
+A version string (default `"v1"`) can be passed to any `MapRpc` / `MapEvent` call to scope the handler to a specific envelope version. Handles containing `{name}`, `*`, or `[` are stored as compiled regex routes; all other handles use the fast lookup dictionary.
 
 ### PulseConnectionManager
 
@@ -61,25 +64,30 @@ await connectionManager.RemoveFromGroupAsync("group-name", connectionId);
 var connection = connectionManager.GetConnection(connectionId);
 ```
 
+All constructor parameters are optional: `IPulseClusterStore?`, `string? nodeId` (defaults to `Environment.MachineName`), and `IPulseLogger?`.
+
 ### PulseContext
 
 Provides contextual information about the current message being processed.
 
 ```csharp
 // Available in handlers via the context parameter
-public async Task<Response> HandleRequest(Request req, PulseContext context)
+public async Task<Response> HandleRequest(Request request, PulseContext context)
 {
     // Access connection info
-    var connectionId = context.Connection.ConnectionId;
+    string connectionId = context.Connection.ConnectionId;
     
     // Access connection manager
-    var group = context.ConnectionManager.GetOrCreateGroup("users");
+    PulseGroup group = context.ConnectionManager.GetOrCreateGroup("users");
     
     // Send events
     await context.SendEventAsync(group, "notification", new { Message = "Hello" });
     
     // Use logger
     context.Logger.LogInfo($"Processing request from {connectionId}");
+    
+    // Route parameters (when the handle contains placeholders like "users.{id}")
+    string? userId = context.GetParameter<string>("id");
     
     return new Response { /* ... */ };
 }
@@ -95,7 +103,7 @@ public class AuthenticationMiddleware
     public async Task InvokeAsync(PulseContext context, Func<Task> next)
     {
         // Pre-processing
-        var token = context.UntypedRequest.AuthToken;
+        string? token = context.UntypedRequest.AuthToken;
         if (!IsValidToken(token))
         {
             throw new PulseException(PulseStatus.UNAUTHORIZED, "Invalid token");
@@ -109,12 +117,14 @@ public class AuthenticationMiddleware
 }
 
 // Register middleware
-dispatcher.Use(async (context, next) => 
+dispatcher.Use(async (context, next) =>
 {
     var middleware = new AuthenticationMiddleware();
     await middleware.InvokeAsync(context, next);
 });
 ```
+
+A built-in `ConcurrencyMiddleware` is also provided for capping in-flight request count with a wait timeout that surfaces as `PulseStatus.TIMEOUT`.
 
 ## Message Types
 
@@ -140,58 +150,74 @@ public class PulseEnvelope<T>
 ### PulseKind
 
 Enumeration of message types:
-- `RPC` - Request/Response pattern
-- `STREAM` - Streaming messages
-- `EVENT` - Fire-and-forget events
+- `RPC` — Request/Response pattern
+- `EVENT` — Fire-and-forget events
 
 ### PulseStatus
 
 Status codes for responses:
-- `OK` - Success
-- `BAD_REQUEST` - Client error
-- `UNAUTHORIZED` - Authentication required
-- `NOT_FOUND` - Handler not found
-- `TIMEOUT` - Operation timed out
-- `INTERNAL_ERROR` - Server error
+- `OK` — Success
+- `BAD_REQUEST` — Client error
+- `UNAUTHORIZED` — Authentication required
+- `NOT_FOUND` — Handler not found
+- `INTERNAL_ERROR` — Server error
+- `TIMEOUT` — Operation timed out
+- `UNSUPPORTED` — Operation not supported
+- `CONFLICT` — Conflicting state
 
 ## Serialization
 
-Uses MessagePack for efficient binary serialization:
+Bodies are encoded with MessagePack and then wrapped in a ChaCha20-Poly1305 AEAD frame (`nonce(12) | ciphertext | tag(16)`). The same `MsgPackSerdes` API is used for both directions:
 
 ```csharp
-// Serialize
+// Serialize (MessagePack + AEAD frame)
 byte[] data = MsgPackSerdes.Serialize(envelope);
 
-// Deserialize
+// Deserialize (verifies the AEAD tag and decodes the payload)
 var envelope = MsgPackSerdes.Deserialize<PulseEnvelope<MyType>>(data);
 ```
 
+`MsgPackSerdes` pools `ArrayBufferWriter<byte>` instances and uses a thread-local `RandomNumberGenerator` for nonce generation.
+
 ## Clustering Support
 
-Optional clustering for horizontal scaling:
+Optional abstractions for horizontal scaling. Pulse does not bundle a transport; provide your own implementation backed by Redis, NATS, or any other coordinator.
 
 ```csharp
-public interface IClusterStore
+public interface IPulseClusterStore
 {
     Task AddConnectionAsync(string connectionId, string nodeId);
     Task RemoveConnectionAsync(string connectionId);
-    Task<Dictionary<string, string>> GetAllConnectionsAsync();
     Task AddToGroupAsync(string groupName, string connectionId, string nodeId);
     Task RemoveFromGroupAsync(string groupName, string connectionId);
-    Task<Dictionary<string, HashSet<string>>> GetGroupMembersAsync(string groupName);
+    Task<Dictionary<string, string>> GetAllConnectionsAsync();
+    Task<Dictionary<string, string>> GetGroupMembersAsync(string groupName);
+    Task<HashSet<string>> GetGroupNodesAsync(string groupName);
+}
+
+public interface IPulseClusterMessaging
+{
+    string CurrentNodeId { get; }
+    Task SendToNodeAsync(string nodeId, byte[] message, CancellationToken cancellationToken = default);
+    Task BroadcastToClusterAsync(byte[] message, CancellationToken cancellationToken = default);
+    Task SubscribeToClusterMessagesAsync(Func<string, byte[], Task> messageHandler, CancellationToken cancellationToken = default);
 }
 ```
+
+A `PulseClusterMessage` envelope (with `PulseClusterMessageType` of `GROUP_BROADCAST`, `DIRECT_MESSAGE`, or `HEALTH_CHECK`) is provided as a building block for inter-node payloads.
 
 ## Memory Management Features
 
 ### ArrayPool Integration
-- Efficient buffer management for message processing
-- Reduces GC pressure in high-throughput scenarios
+- Pooled receive and message-assembly buffers reduce GC pressure on the hot path.
+
+### Pooled Serialization Writers
+- `MsgPackSerdes` reuses `ArrayBufferWriter<byte>` instances sized to processor count.
 
 ### Automatic Cleanup
-- Abandoned streams cleaned up after 5-minute timeout
-- Empty groups automatically removed
-- Connection metadata limited to 100 entries
+- Empty groups are removed when their last member leaves.
+- Each `PulseGroup` runs a periodic sweep every 30 seconds to prune closed or failed connections.
+- Connection metadata is capped at 100 entries per connection.
 
 ### Resource Disposal
 - Proper implementation of IDisposable patterns
@@ -204,32 +230,35 @@ try
 {
     await dispatcher.ProcessRawAsync(connection, messageBytes);
 }
-catch (PulseException ex)
+catch (PulseException pulseException)
 {
     // Handle Pulse-specific exceptions
-    logger.LogError($"Pulse error: {ex.Status} - {ex.Message}");
+    logger.LogError($"Pulse error: {pulseException.Status} - {pulseException.Message}");
 }
-catch (Exception ex)
+catch (Exception exception)
 {
     // Handle general exceptions
-    logger.LogError("Unexpected error", ex);
+    logger.LogError("Unexpected error", exception);
 }
 ```
+
+Internally, `ErrorMapper.MapException` translates known exceptions into a `(PulseStatus, string)` tuple — `PulseException` passes through, cancellation maps to `TIMEOUT`, and everything else maps to `INTERNAL_ERROR`.
 
 ## Thread Safety
 
 All public APIs are thread-safe and designed for concurrent access:
 - `ConcurrentDictionary` for connection and group storage
+- `ReaderWriterLockSlim` for regex route registration
 - Thread-safe cleanup timers
 - Async/await throughout for proper synchronization
 
 ## Performance Tips
 
-1. **Message Size**: Keep messages under 10MB (default limit)
-2. **Buffering**: Use streaming for large data transfers
-3. **Groups**: Remove connections from groups when no longer needed
-4. **Metadata**: Limit connection metadata usage
-5. **Handlers**: Keep handlers lightweight and async
+1. **Message size** — keep messages under 10 MiB (default limit, configurable).
+2. **Groups** — remove connections from groups when no longer needed.
+3. **Metadata** — limit connection metadata usage.
+4. **Handlers** — keep handlers lightweight and async.
+5. **Route shape** — prefer literal handles over patterns; patterns fall back to regex matching.
 
 ## Extension Points
 
@@ -237,11 +266,14 @@ All public APIs are thread-safe and designed for concurrent access:
 ```csharp
 public class CustomLogger : IPulseLogger
 {
+    public void LogDebug(string message) { /* ... */ }
     public void LogInfo(string message) { /* ... */ }
     public void LogWarning(string message) { /* ... */ }
     public void LogError(string message, Exception? exception = null) { /* ... */ }
 }
 ```
+
+A ready-to-use `PulseConsoleLogger` is included; pass `enableDebugLogs: true` to surface debug-level entries.
 
 ### Custom Middleware
 ```csharp
@@ -253,14 +285,14 @@ dispatcher.Use(async (context, next) =>
 ```
 
 ### Custom Serialization
-Implement custom serialization by modifying `MsgPackSerdes` or creating your own serialization layer.
+`MsgPackSerdes` is the single serialization gateway. Replace or wrap it if you need a different wire format; the wire layout is `nonce(12) | MessagePack-encoded ciphertext | tag(16)`.
 
 ## Dependencies
 
 - .NET 10.0 or later
-- MessagePack-CSharp (2.5.187)
-- System.Threading.Channels
+- MessagePack 3.1.4
+- NaCl.Core 2.0.6
 
 ## License
 
-This project is licensed under the MIT License. 
+This project is licensed under the BSD 3-Clause License.

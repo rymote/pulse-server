@@ -5,7 +5,7 @@ ASP.NET Core integration for the Rymote.Pulse framework, providing WebSocket mid
 ## Overview
 
 Rymote.Pulse.AspNet enables easy integration of Pulse messaging capabilities into ASP.NET Core applications. It provides:
-- WebSocket middleware for handling Pulse protocol
+- WebSocket middleware for handling the Pulse protocol
 - Integration with ASP.NET Core's dependency injection
 - Request pipeline integration
 - Automatic connection lifecycle management
@@ -23,16 +23,17 @@ dotnet add package Rymote.Pulse.AspNet
 ```csharp
 using Rymote.Pulse.AspNet;
 using Rymote.Pulse.Core;
+using Rymote.Pulse.Core.Logging;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Register Pulse services
-builder.Services.AddSingleton<IPulseLogger, MyPulseLogger>();
+builder.Services.AddSingleton<IPulseLogger>(new PulseConsoleLogger(enableDebugLogs: false));
 builder.Services.AddSingleton<PulseConnectionManager>();
-builder.Services.AddSingleton<PulseDispatcher>(sp =>
+builder.Services.AddSingleton<PulseDispatcher>(serviceProvider =>
 {
-    var connectionManager = sp.GetRequiredService<PulseConnectionManager>();
-    var logger = sp.GetRequiredService<IPulseLogger>();
+    var connectionManager = serviceProvider.GetRequiredService<PulseConnectionManager>();
+    var logger = serviceProvider.GetRequiredService<IPulseLogger>();
     return new PulseDispatcher(connectionManager, logger);
 });
 
@@ -46,7 +47,7 @@ var logger = app.Services.GetRequiredService<IPulseLogger>();
 dispatcher.MapRpc<EchoRequest, EchoResponse>("echo",
     async (request, context) => new EchoResponse { Message = request.Message });
 
-// Use Pulse WebSocket middleware
+// Use Pulse WebSocket middleware (options callback is optional)
 app.UsePulseProtocol("/pulse", dispatcher, logger);
 
 app.Run();
@@ -60,10 +61,14 @@ The `UsePulseProtocol` extension method configures the WebSocket middleware:
 
 ```csharp
 app.UsePulseProtocol(
-    websocketPath: "/pulse",      // WebSocket endpoint path
-    pulseDispatcher: dispatcher,   // Configured PulseDispatcher
-    pulseLogger: logger           // IPulseLogger implementation
-);
+    websocketPath: "/pulse",                          // WebSocket endpoint path
+    pulseDispatcher: dispatcher,                      // Configured PulseDispatcher
+    pulseLogger: logger,                              // IPulseLogger implementation
+    configureOptionsAction: options =>                // Optional options callback
+    {
+        options.BufferSizeInBytes = 4 * 1024;
+        options.MaxMessageSizeInBytes = 10 * 1024 * 1024;
+    });
 ```
 
 ### Multiple Endpoints
@@ -85,17 +90,17 @@ app.UsePulseProtocol("/admin/pulse", adminDispatcher, logger);
 ```csharp
 // Register services
 builder.Services.AddScoped<IUserService, UserService>();
-builder.Services.AddSingleton<IPulseLogger, SerilogPulseLogger>();
+builder.Services.AddSingleton<IPulseLogger, AspNetCorePulseLogger>();
 
 // Create dispatcher with DI
-builder.Services.AddSingleton<PulseDispatcher>(sp =>
+builder.Services.AddSingleton<PulseDispatcher>(serviceProvider =>
 {
-    var connectionManager = sp.GetRequiredService<PulseConnectionManager>();
-    var logger = sp.GetRequiredService<IPulseLogger>();
+    var connectionManager = serviceProvider.GetRequiredService<PulseConnectionManager>();
+    var logger = serviceProvider.GetRequiredService<IPulseLogger>();
     var dispatcher = new PulseDispatcher(connectionManager, logger);
     
     // Configure handlers with injected services
-    var userService = sp.GetRequiredService<IUserService>();
+    var userService = serviceProvider.GetRequiredService<IUserService>();
     
     dispatcher.MapRpc<GetUserRequest, UserResponse>("users.get",
         async (request, context) =>
@@ -108,7 +113,11 @@ builder.Services.AddSingleton<PulseDispatcher>(sp =>
 });
 ```
 
+For per-request scoping, the `Rymote.Pulse.Attributes` package can register a scope-management middleware automatically when you pass an `IServiceProvider` to `RegisterHandlersFromAssembly`.
+
 ### Authentication Integration
+
+The middleware automatically stores the originating `HttpContext` (and a few other request facts) in connection metadata, so you can run an ASP.NET authentication check from a Pulse middleware:
 
 ```csharp
 // Use ASP.NET Core authentication
@@ -118,8 +127,7 @@ app.UseAuthorization();
 // Add authentication middleware to Pulse
 dispatcher.Use(async (context, next) =>
 {
-    // Access HttpContext from connection metadata
-    if (context.Connection.TryGetMetadata<HttpContext>("HttpContext", out var httpContext))
+    if (context.Connection.TryGetMetadata<HttpContext>("http_context", out var httpContext) && httpContext != null)
     {
         if (!httpContext.User.Identity?.IsAuthenticated ?? true)
         {
@@ -127,7 +135,7 @@ dispatcher.Use(async (context, next) =>
         }
         
         // Store user info in connection metadata
-        context.Connection.SetMetadata("UserId", httpContext.User.FindFirst("sub")?.Value);
+        context.Connection.SetMetadata("user_id", httpContext.User.FindFirst("sub")?.Value);
     }
     
     await next();
@@ -156,15 +164,24 @@ app.UsePulseProtocol("/pulse", dispatcher, logger);
 
 The middleware automatically manages connection lifecycle:
 
-1. **Connection Established**: When a WebSocket connection is accepted
-2. **Connection Added**: Registered with PulseConnectionManager
-3. **Message Processing**: Handles incoming messages through the dispatcher
-4. **Connection Cleanup**: Automatically removed on disconnect
+1. **Connection Established** — when a WebSocket upgrade is accepted
+2. **Connection Registered** — added to `PulseConnectionManager` with the HTTP request's query parameters
+3. **Metadata Populated** — the following keys are set automatically:
+   - `http_context` — the originating `HttpContext`
+   - `ip_address` — the client IP (honoring `X-Forwarded-For` / `X-Real-IP`)
+   - `user_agent` — the `User-Agent` header
+   - `origin` — the `Origin` header
+   - `connected_at` — UTC timestamp of the upgrade
+4. **OnConnect Handlers Run** — registered via `dispatcher.AddOnConnectHandler(...)`
+5. **Message Processing** — incoming binary messages are handed to the dispatcher
+6. **OnDisconnect Handlers Run** — registered via `dispatcher.AddOnDisconnectHandler(...)`
+7. **Connection Cleanup** — automatically removed on disconnect
+
+Log output looks like:
 
 ```csharp
-// Lifecycle events in logs
-"Client connected: {connectionId}"
-"Client disconnected: {connectionId}"
+"[{connectionId}] Client connected: IP: {ipAddress} | Origin: {origin} | UserAgent: {userAgent}"
+"[{connectionId}] Client disconnected: IP: {ipAddress} | Duration: {duration}"
 "Client initiated close. Status: {status}, Description: {description}"
 ```
 
@@ -180,7 +197,7 @@ The middleware provides comprehensive error handling:
 
 // Message processing errors
 "Error processing incoming Pulse message"
-// Returns error response to client
+// Returns error response to client (for RPC messages)
 ```
 
 ### Connection Errors
@@ -194,19 +211,20 @@ The middleware provides comprehensive error handling:
 // Sends BAD_REQUEST response
 ```
 
+If an `OnConnect` handler throws, the middleware closes the socket with `WebSocketCloseStatus.PolicyViolation` and the exception message.
+
 ## Memory Management
 
 The AspNet integration includes memory-efficient features:
 
 ### ArrayPool Buffer Management
-- Uses `ArrayPool<byte>` for efficient buffer allocation
-- Adaptive buffer sizing based on message patterns
-- Automatic buffer return in all code paths
+- Uses `ArrayPool<byte>.Shared` for receive and message-assembly buffers
+- Per-segment buffers are also rented from the shared pool
+- All rented buffers are returned in finally blocks, including error paths
 
 ### Message Size Limits
-- Default 10MB maximum message size
-- Configurable per deployment
-- Automatic connection closure for oversized messages
+- Default 10 MiB maximum message size (configurable via `PulseProtocolOptions.MaxMessageSizeInBytes`)
+- The socket is closed with `WebSocketCloseStatus.MessageTooBig` when a frame exceeds the limit
 
 ### Resource Cleanup
 - Proper disposal of WebSocket connections
@@ -217,13 +235,13 @@ The AspNet integration includes memory-efficient features:
 
 ### Buffer Settings
 ```csharp
-const int BufferSizeInBytes = 4096;      // Initial buffer size
-const int MaxMessageSize = 10485760;     // 10MB max message
+options.BufferSizeInBytes = 4 * 1024;       // Initial receive buffer (default 4 KiB)
+options.MaxMessageSizeInBytes = 10 * 1024 * 1024; // 10 MiB max message (default)
 ```
 
 ### Connection Pooling
-- Reuses buffers via ArrayPool
-- Efficient message accumulation
+- Reuses receive buffers via ArrayPool
+- Single assembly buffer per connection, sized to the configured max message
 - Minimal allocations per message
 
 ## Logging Integration
@@ -240,6 +258,9 @@ public class AspNetCorePulseLogger : IPulseLogger
         _logger = logger;
     }
     
+    public void LogDebug(string message) =>
+        _logger.LogDebug(message);
+        
     public void LogInfo(string message) => 
         _logger.LogInformation(message);
         
@@ -263,7 +284,7 @@ builder.Services.AddHealthChecks()
     .AddCheck("pulse", () =>
     {
         var connectionManager = app.Services.GetRequiredService<PulseConnectionManager>();
-        var connections = connectionManager.GetAllConnectionIdsAsync().Result;
+        var connections = connectionManager.GetAllConnectionIdsAsync().GetAwaiter().GetResult();
         
         return connections.Count() < 10000 
             ? HealthCheckResult.Healthy($"Active connections: {connections.Count()}")
@@ -305,16 +326,16 @@ app.MapHealthChecks("/health");
    - Monitor for memory/resource constraints
 
 3. **Message Size Errors**
-   - Adjust MaxMessageSize if needed
-   - Consider using streaming for large data
+   - Adjust `PulseProtocolOptions.MaxMessageSizeInBytes` if needed
+   - Split large payloads at the application layer
    - Monitor buffer pool usage
 
 ## Dependencies
 
 - .NET 10.0 or later
 - Rymote.Pulse.Core
-- Microsoft.AspNetCore.WebSockets
+- Microsoft.AspNetCore.App (framework reference)
 
 ## License
 
-This project is licensed under the MIT License. 
+This project is licensed under the BSD 3-Clause License.
