@@ -82,10 +82,10 @@ public class PulseConnection : IDisposable
         string? statusDescription = null,
         CancellationToken cancellationToken = default)
     {
-        if (Socket.State == WebSocketState.Open)
+        if (Socket.State == WebSocketState.Open || Socket.State == WebSocketState.CloseReceived)
             await Socket.CloseAsync(
-                closeStatus, 
-                statusDescription ?? "Connection closed by server", 
+                closeStatus,
+                statusDescription ?? "Connection closed by server",
                 cancellationToken);
     }
     

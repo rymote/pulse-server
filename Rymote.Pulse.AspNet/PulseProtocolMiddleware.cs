@@ -296,7 +296,7 @@ public static class PulseProtocolMiddleware
             for (int index = 0; index < segmentCount; index++)
                 arrayPool.Return(messageSegments[index].Array!);
 
-            if (connection.IsOpen)
+            if (connection.IsOpen || connection.Socket.State == WebSocketState.CloseReceived)
             {
                 try
                 {

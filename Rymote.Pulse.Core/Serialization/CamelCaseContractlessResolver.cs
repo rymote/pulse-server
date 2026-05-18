@@ -27,6 +27,7 @@ public sealed class CamelCaseContractlessResolver : IFormatterResolver
             Type targetType = typeof(T);
 
             bool treatAsObject =
+                targetType != typeof(object) &&
                 !targetType.IsPrimitive &&
                 targetType != typeof(string) &&
                 targetType != typeof(decimal) &&

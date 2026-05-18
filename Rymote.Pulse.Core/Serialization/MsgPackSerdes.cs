@@ -25,6 +25,7 @@ public static class MsgPackSerdes
                 DynamicEnumAsStringResolver.Instance,
                 DynamicGenericResolver.Instance,
                 DynamicUnionResolver.Instance,
+                PrimitiveObjectResolver.Instance,
                 DynamicObjectResolver.Instance,
                 ContractlessStandardResolver.Instance
             ));
