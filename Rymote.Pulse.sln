@@ -1,9 +1,12 @@
-﻿Microsoft Visual Studio Solution File, Format Version 12.00
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Rymote.Pulse.Core", "Rymote.Pulse.Core\Rymote.Pulse.Core.csproj", "{B5E64076-83AE-43A9-9669-12D8D4D262FA}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Rymote.Pulse.AspNet", "Rymote.Pulse.AspNet\Rymote.Pulse.AspNet.csproj", "{6F0BC7E9-486A-44CC-AAE6-E77BB08C8600}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Rymote.Pulse.Attributes", "Rymote.Pulse.Attributes\Rymote.Pulse.Attributes.csproj", "{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Rymote.Pulse.Hosting", "Rymote.Pulse.Hosting\Rymote.Pulse.Hosting.csproj", "{83B40285-22A5-4584-BF9A-36866B2D4C2C}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -51,6 +54,18 @@ Global
 		{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}.Release|x64.Build.0 = Release|Any CPU
 		{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}.Release|x86.ActiveCfg = Release|Any CPU
 		{FF1F53D6-70B1-46B9-B0F4-2BB2CF9BFAFF}.Release|x86.Build.0 = Release|Any CPU
+		{83B40285-22A5-4584-BF9A-36866B2D4C2C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{83B40285-22A5-4584-BF9A-36866B2D4C2C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{83B40285-22A5-4584-BF9A-36866B2D4C2C}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{83B40285-22A5-4584-BF9A-36866B2D4C2C}.Debug|x64.Build.0 = Debug|Any CPU
+		{83B40285-22A5-4584-BF9A-36866B2D4C2C}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{83B40285-22A5-4584-BF9A-36866B2D4C2C}.Debug|x86.Build.0 = Debug|Any CPU
+		{83B40285-22A5-4584-BF9A-36866B2D4C2C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{83B40285-22A5-4584-BF9A-36866B2D4C2C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{83B40285-22A5-4584-BF9A-36866B2D4C2C}.Release|x64.ActiveCfg = Release|Any CPU
+		{83B40285-22A5-4584-BF9A-36866B2D4C2C}.Release|x64.Build.0 = Release|Any CPU
+		{83B40285-22A5-4584-BF9A-36866B2D4C2C}.Release|x86.ActiveCfg = Release|Any CPU
+		{83B40285-22A5-4584-BF9A-36866B2D4C2C}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
