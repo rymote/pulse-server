@@ -4,7 +4,7 @@
 <br />
 
 <div align="center">
-  Rymote.Pulse - High-performance, real-time messaging framework for .NET
+  Rymote.Pulse — High-performance, real-time messaging framework for .NET
 </div>
 
 <div align="center">
@@ -17,40 +17,74 @@
 
 ## Overview
 
-Rymote.Pulse is a modern messaging framework designed to simplify real-time communication in distributed .NET applications. It provides a clean, strongly-typed API for handling request/response (RPC) and event-driven messaging over WebSockets.
+Rymote.Pulse is a real-time messaging framework for .NET. v3 introduces a stream-per-RPC protocol with pluggable transports (WebSocket, raw TCP, WebTransport over HTTP/3), so the same dispatcher and handlers can serve browser, mobile, and service-to-service clients over whichever transport works in each environment.
 
 ## Features
 
-- **High performance** — built on WebSockets with efficient binary serialization using MessagePack.
-- **Authenticated encryption** — every payload is wrapped in a ChaCha20-Poly1305 AEAD frame.
-- **Communication patterns** — strongly-typed RPC and event/broadcast messaging.
-- **Middleware pipeline** — extensible middleware system for cross-cutting concerns.
-- **Connection groups** — built-in support for broadcasting to connection groups.
-- **Pluggable clustering** — optional clustering abstractions (`IPulseClusterStore`, `IPulseClusterMessaging`) for horizontal scaling.
-- **Dependency injection** — first-class support for ASP.NET Core DI.
-- **Attribute routing** — optional attribute-based handler registration via `Rymote.Pulse.Attributes`.
-- **Type safety** — strongly-typed message contracts with compile-time safety.
-- **Memory efficient** — ArrayPool-based buffer management and automatic cleanup.
+- **Stream-per-RPC protocol** — each RPC owns its own bidirectional stream; events use unidirectional streams; lossy events use datagrams. No more correlation-id multiplexing.
+- **Pluggable transports** — WebSocket (HttpListener or ASP.NET Core), raw TCP (with optional TLS), and WebTransport over HTTP/3. Mix on a single host.
+- **Stream multiplexer** — single-channel transports (WS, TCP) carry many concurrent streams via an HTTP/2-style frame layer in `Rymote.Pulse.Transports.Multiplexing`.
+- **Authenticated encryption** — every envelope is wrapped in a ChaCha20-Poly1305 AEAD frame.
+- **Generic-host DI** — transport-agnostic `services.AddPulse()` returns an `IPulseBuilder`; each transport package extends it.
+- **Server streaming** — `MapRpcStream` handlers return `IAsyncEnumerable<TResponse>` on a bidi stream.
+- **Datagram events** — `PulseKind.DATAGRAM_EVENT` for lossy fire-and-forget over WT (datagram exposure on Kestrel WT is a .NET-10 platform gap; multiplexed transports emulate via the same op-code over TCP).
+- **Middleware pipeline** — extensible middleware for cross-cutting concerns (auth, logging, concurrency limits).
+- **Connection groups** — broadcast to named groups across all attached transports.
+- **Pluggable clustering** — `IPulseClusterStore` / `IPulseClusterMessaging` abstractions for horizontal scaling.
+- **Attribute routing** — optional reflection-based handler registration via `Rymote.Pulse.Attributes`.
 
-## Projects
+## Packages
 
 ### [Rymote.Pulse.Core](./Rymote.Pulse.Core/README.md)
-The core library containing the fundamental messaging infrastructure, connection management, and protocol implementation.
+Dispatcher, envelope, transport contracts (`IPulseSession` / `IPulseStream` / `IPulseDatagramChannel`), session pipeline/lifecycle, connection manager, groups, and serialization.
 
-### [Rymote.Pulse.AspNet](./Rymote.Pulse.AspNet/README.md)
-ASP.NET Core integration providing middleware for WebSocket handling and seamless integration with the ASP.NET Core pipeline.
+### Rymote.Pulse.Hosting
+Transport-agnostic generic-host DI. `services.AddPulse()` returns an `IPulseBuilder` that each transport package extends with its own `AddXxxTransport(...)`.
 
 ### Rymote.Pulse.Attributes
-Optional attribute-based handler registration. Scan an assembly and wire up RPC, event, connect/disconnect, and metadata-changed handlers automatically.
+Optional attribute-based handler registration. Scans an assembly and wires up RPC, event, connect/disconnect, and metadata-changed handlers.
+
+### Rymote.Pulse.Transports.Multiplexing
+HTTP/2-style stream multiplexer shared by WebSocket and Raw TCP transports. Carries many virtual streams + a datagram channel over one byte channel.
+
+### Rymote.Pulse.Transports.WebSockets.HttpListener
+Standalone WebSocket transport based on `System.Net.HttpListener` for generic-host applications (no ASP.NET dependency).
+
+### Rymote.Pulse.Transports.WebSockets.AspNetCore
+WebSocket transport that plugs into an existing ASP.NET Core pipeline via `app.UsePulseProtocol(...)`.
+
+### Rymote.Pulse.Transports.RawTcp
+Raw TCP transport with optional TLS (`SslStream`) and mTLS support. For service-to-service deployments where HTTP framing isn't needed.
+
+### Rymote.Pulse.Transports.WebTransport.AspNetCore
+WebTransport-over-HTTP/3 transport via Kestrel + the experimental `IHttpWebTransportFeature`. For browser clients that need per-stream flow control.
+
+### Rymote.Pulse.Client
+.NET client SDK with transport fallback negotiation. Same wire as the server; tries each registered transport in order.
+
+### Rymote.Pulse.Client.Transports.WebSockets / .RawTcp / .WebTransport
+Client-side transport implementations matching the server packages.
 
 ## Installation
 
 ```bash
-# Core package
+# Core
 dotnet add package Rymote.Pulse.Core
 
-# ASP.NET Core integration
-dotnet add package Rymote.Pulse.AspNet
+# Generic-host DI
+dotnet add package Rymote.Pulse.Hosting
+
+# Pick one or more server transports
+dotnet add package Rymote.Pulse.Transports.WebSockets.HttpListener
+dotnet add package Rymote.Pulse.Transports.WebSockets.AspNetCore
+dotnet add package Rymote.Pulse.Transports.RawTcp
+dotnet add package Rymote.Pulse.Transports.WebTransport.AspNetCore
+
+# .NET client
+dotnet add package Rymote.Pulse.Client
+dotnet add package Rymote.Pulse.Client.Transports.WebSockets
+dotnet add package Rymote.Pulse.Client.Transports.RawTcp
+dotnet add package Rymote.Pulse.Client.Transports.WebTransport
 
 # Optional attribute-based handler registration
 dotnet add package Rymote.Pulse.Attributes
@@ -58,67 +92,107 @@ dotnet add package Rymote.Pulse.Attributes
 
 ## Examples
 
-### Server setup
+### Server — generic host with WebSocket + raw TCP
 
 ```csharp
-var builder = WebApplication.CreateBuilder(args);
+HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
-// Add Pulse services
+builder.Services
+    .AddPulse()
+    .AddWebSocketHttpListenerTransport(options =>
+    {
+        options.Prefixes.Add("http://+:8080/pulse/");
+    })
+    .AddRawTcpTransport(options =>
+    {
+        options.Endpoint = new IPEndPoint(IPAddress.Any, 9000);
+    });
+
+IHost host = builder.Build();
+
+PulseDispatcher dispatcher = host.Services.GetRequiredService<PulseDispatcher>();
+
+dispatcher.MapRpc<CalculateRequest, CalculateResponse>("calculator.add",
+    async (request, context) => new CalculateResponse { Result = request.A + request.B });
+
+dispatcher.MapRpcStream<PriceSubscription, PriceUpdate>("prices.subscribe",
+    async (request, context) =>
+    {
+        await foreach (PriceUpdate update in priceFeed.WatchAsync(request.Symbol, context.CancellationToken))
+            yield return update;
+    });
+
+dispatcher.MapEvent<NotificationEvent>("user.notification",
+    async (notification, context) => await notifications.LogAsync(notification));
+
+await host.RunAsync();
+```
+
+### Server — ASP.NET Core integration
+
+```csharp
+WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<IPulseLogger>(new PulseConsoleLogger(enableDebugLogs: false));
 builder.Services.AddSingleton<PulseConnectionManager>();
 builder.Services.AddSingleton<PulseDispatcher>(serviceProvider =>
-{
-    var connectionManager = serviceProvider.GetRequiredService<PulseConnectionManager>();
-    var logger = serviceProvider.GetRequiredService<IPulseLogger>();
-    return new PulseDispatcher(connectionManager, logger);
-});
+    new PulseDispatcher(serviceProvider.GetRequiredService<PulseConnectionManager>(),
+                       serviceProvider.GetRequiredService<IPulseLogger>()));
 
-var app = builder.Build();
+WebApplication app = builder.Build();
+PulseDispatcher dispatcher = app.Services.GetRequiredService<PulseDispatcher>();
+IPulseLogger logger = app.Services.GetRequiredService<IPulseLogger>();
 
-// Configure Pulse dispatcher
-var dispatcher = app.Services.GetRequiredService<PulseDispatcher>();
-var logger = app.Services.GetRequiredService<IPulseLogger>();
+dispatcher.MapRpc<EchoRequest, EchoResponse>("echo",
+    async (request, context) => new EchoResponse { Message = request.Message });
 
-// Map RPC endpoint
-dispatcher.MapRpc<CalculateRequest, CalculateResponse>("calculator.add",
-    async (request, context) =>
-    {
-        return new CalculateResponse
-        {
-            Result = request.A + request.B
-        };
-    });
-
-// Use Pulse WebSocket middleware (options callback is optional)
-app.UsePulseProtocol("/pulse", dispatcher, logger, options =>
-{
-    options.BufferSizeInBytes = 4 * 1024;
-    options.MaxMessageSizeInBytes = 10 * 1024 * 1024;
-});
+app.UsePulseProtocol("/pulse", dispatcher, logger);
 
 app.Run();
 ```
 
-### RPC (request/response)
+### .NET client — transport fallback
 
 ```csharp
-dispatcher.MapRpc<GetUserRequest, UserResponse>("users.get",
-    async (request, context) =>
+PulseClient client = new PulseClient(new PulseClientOptions
+{
+    Endpoint = new Uri("https://pulse.example.com/pulse"),
+    Transports = new IPulseClientTransport[]
     {
-        var user = await userService.GetUserAsync(request.UserId);
-        return new UserResponse { Id = user.Id, Name = user.Name };
-    });
+        new WebTransportClientTransport(),    // tried first
+        new WebSocketClientTransport(),       // fallback if WT can't connect
+    },
+    AuthToken = "session-token",
+    AutoReconnect = true,
+});
+
+await client.ConnectAsync();
+
+EchoResponse response = await client.InvokeAsync<EchoRequest, EchoResponse>(
+    "echo", new EchoRequest { Message = "Hello" });
+
+await foreach (PriceUpdate update in client.InvokeStreamAsync<PriceSubscription, PriceUpdate>(
+    "prices.subscribe", new PriceSubscription { Symbol = "AAPL" }))
+{
+    Console.WriteLine(update);
+}
+
+await client.SendEventAsync("user.heartbeat", new HeartbeatEvent { Timestamp = DateTime.UtcNow });
+
+client.On<NotificationEvent>("user.notification", async (notification, context) =>
+{
+    Console.WriteLine($"From server: {notification.Message}");
+});
 ```
 
 ### Route parameters
 
-Handles support brace-style parameters that are extracted from the incoming handle:
+Handles support brace-style parameters extracted from the incoming handle:
 
 ```csharp
 dispatcher.MapRpc<GetItemResponse>("inventory.{itemId}.get",
     async context =>
     {
-        var itemId = context.GetRequiredParameter<string>("itemId");
+        string itemId = context.GetRequiredParameter<string>("itemId");
         return await inventory.GetAsync(itemId);
     });
 ```
@@ -126,48 +200,47 @@ dispatcher.MapRpc<GetItemResponse>("inventory.{itemId}.get",
 ### Events and broadcasting
 
 ```csharp
-// Server - Send to the current connection
+// Send to the current connection
 await context.SendEventAsync("user.notification",
-    new NotificationEvent { Message = "Hello!" });
+    new NotificationEvent { Message = "Hello" });
 
-// Server - Send to a specific connection
-await context.SendEventAsync(otherConnection, "user.notification",
-    new NotificationEvent { Message = "Hello!" });
-
-// Server - Broadcast to a group
-var group = context.ConnectionManager.GetOrCreateGroup("premium-users");
+// Broadcast to a group
+PulseGroup group = context.ConnectionManager.GetOrCreateGroup("premium-users");
 await context.ConnectionManager.AddToGroupAsync("premium-users", context.Connection);
 await context.SendEventAsync(group, "feature.update",
     new FeatureUpdateEvent { Feature = "New Dashboard" });
+
+// Lossy datagram event (transport must support datagrams)
+await context.SendEventAsync(context.Connection, "user.cursor",
+    new CursorPositionEvent { X = 123, Y = 456 },
+    deliveryMode: PulseDeliveryMode.Datagram);
 ```
 
 ## Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   Pulse Client  │────▶│  WebSocket Layer │────▶│  Pulse Server   │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-                                                           │
-                                                           ▼
-                              ┌─────────────────────────────────────────┐
-                              │          Middleware Pipeline            │
-                              │  ┌─────────┐  ┌─────────┐  ┌────────┐   │
-                              │  │ Logging │─▶│  Auth   │─▶│ Custom │   │
-                              │  └─────────┘  └─────────┘  └────────┘   │
-                              └─────────────────────────────────────────┘
-                                                           │
-                                                           ▼
-                                                  ┌─────────────────┐
-                                                  │    Dispatcher   │
-                                                  │  ┌───────────┐  │
-                                                  │  │ Handlers  │  │
-                                                  │  └───────────┘  │
-                                                  └─────────────────┘
+┌──────────────┐                  ┌──────────────────────────────────┐
+│ Pulse Client │ ── transport ──▶ │ Transport (WT / WS / Raw TCP)    │
+└──────────────┘                  │  ─ native streams (WT)           │
+                                  │  ─ multiplexer over byte channel │
+                                  └──────────────────┬───────────────┘
+                                                     ▼
+                                  ┌──────────────────────────────────┐
+                                  │ PulseSessionLifecycle            │
+                                  │  OnConnect → pipeline → cleanup  │
+                                  └──────────────────┬───────────────┘
+                                                     ▼
+                                  ┌──────────────────────────────────┐
+                                  │ Middleware pipeline (per stream) │
+                                  └──────────────────┬───────────────┘
+                                                     ▼
+                                  ┌──────────────────────────────────┐
+                                  │ PulseDispatcher                  │
+                                  │  Map(Rpc|RpcStream|Event)        │
+                                  └──────────────────────────────────┘
 ```
 
 ## Memory management
-
-Rymote.Pulse includes several memory optimization features:
 
 - **ArrayPool buffer management** — receive buffers and message-assembly buffers are pooled via `ArrayPool<byte>.Shared`.
 - **Pooled serialization writers** — `MsgPackSerdes` reuses `ArrayBufferWriter<byte>` instances sized to processor count.
@@ -184,12 +257,10 @@ Implement the `IPulseLogger` interface to integrate with your logging framework:
 public class SerilogPulseLogger : IPulseLogger
 {
     private readonly ILogger _logger;
-
     public void LogDebug(string message) => _logger.Debug(message);
     public void LogInfo(string message) => _logger.Information(message);
     public void LogWarning(string message) => _logger.Warning(message);
-    public void LogError(string message, Exception? exception = null) =>
-        _logger.Error(exception, message);
+    public void LogError(string message, Exception? exception = null) => _logger.Error(exception, message);
 }
 ```
 
@@ -201,7 +272,6 @@ Pulse ships abstractions for clustering but does not bundle a transport implemen
 
 ```csharp
 services.AddSingleton<IPulseClusterStore, RedisPulseClusterStore>();
-
 services.AddSingleton<PulseConnectionManager>(serviceProvider =>
 {
     var clusterStore = serviceProvider.GetRequiredService<IPulseClusterStore>();
@@ -212,14 +282,23 @@ services.AddSingleton<PulseConnectionManager>(serviceProvider =>
 
 ## Performance considerations
 
-- **Message size** — default maximum message size is 10 MiB (configurable via `PulseProtocolOptions.MaxMessageSizeInBytes`).
-- **Buffer size** — default receive buffer is 4 KiB (configurable via `PulseProtocolOptions.BufferSizeInBytes`).
-- **Group cleanup** — empty groups are removed; each group purges closed/failed connections every 30 seconds.
+- **Per-stream concurrency** — each accepted stream runs its own task; one slow handler doesn't block sibling streams.
+- **Max envelope size** — defaults to 10 MiB per envelope; configurable on each transport's options.
+- **Stream multiplexer buffering** — single-channel transports share the underlying socket's send buffer; a slow consumer on one virtual stream applies head-of-line back-pressure to siblings. WebTransport sidesteps this with native QUIC per-stream flow control.
 - **Metadata limits** — maximum 100 metadata entries per connection.
+
+## v2 → v3 migration
+
+v3 is a **hard cut**. The wire format is incompatible with v2 — clients and servers must upgrade together. Key changes:
+
+- `ClientCorrelationId` removed from `PulseEnvelope`; stream identity is the correlation.
+- `PulseKind` now has four values: `RPC`, `RPC_STREAM`, `EVENT`, `DATAGRAM_EVENT`.
+- The `Rymote.Pulse.AspNet` package was renamed to `Rymote.Pulse.Transports.WebSockets.AspNetCore`. `app.UsePulseProtocol(...)` still works with the same signature.
+- The server-side abstraction `IPulseTransportConnection` (v2) is replaced by `IPulseSession` + `IPulseStream` + `IPulseDatagramChannel`.
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](./CONTRIBUTING.md) for details.
+Please see our [Contributing Guide](./CONTRIBUTING.md) for details.
 
 ## Support the project
 
