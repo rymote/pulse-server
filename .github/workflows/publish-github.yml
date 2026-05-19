@@ -31,28 +31,12 @@ jobs:
 
       - name: Restore & build
         run: |
-          dotnet restore
-          dotnet build --configuration Release --no-restore
+          dotnet restore Rymote.Pulse.sln
+          dotnet build Rymote.Pulse.sln --configuration Release --no-restore
 
-      - name: Pack Rymote.Pulse.Core
+      - name: Pack all packages
         run: |
-          dotnet pack Rymote.Pulse.Core/Rymote.Pulse.Core.csproj \
-            --configuration Release \
-            --no-build \
-            --output ./artifacts \
-            /p:Version=${{ env.VERSION }}
-
-      - name: Pack Rymote.Pulse.Attributes
-        run: |
-          dotnet pack Rymote.Pulse.Attributes/Rymote.Pulse.Attributes.csproj \
-            --configuration Release \
-            --no-build \
-            --output ./artifacts \
-            /p:Version=${{ env.VERSION }}
-          
-      - name: Pack Rymote.Pulse.AspNet
-        run: |
-          dotnet pack Rymote.Pulse.AspNet/Rymote.Pulse.AspNet.csproj \
+          dotnet pack Rymote.Pulse.sln \
             --configuration Release \
             --no-build \
             --output ./artifacts \
