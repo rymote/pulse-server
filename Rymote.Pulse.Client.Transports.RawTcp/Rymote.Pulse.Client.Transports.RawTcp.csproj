@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+
+        <PackageId>Rymote.Pulse.Client.Transports.RawTcp</PackageId>
+        <Authors>Rymote</Authors>
+        <Description>Raw TCP transport for the Rymote.Pulse .NET client</Description>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Rymote.Pulse.Core\Rymote.Pulse.Core.csproj" />
+      <ProjectReference Include="..\Rymote.Pulse.Client\Rymote.Pulse.Client.csproj" />
+      <ProjectReference Include="..\Rymote.Pulse.Transports.Multiplexing\Rymote.Pulse.Transports.Multiplexing.csproj" />
+    </ItemGroup>
+
+</Project>

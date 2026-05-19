@@ -12,69 +12,98 @@ public class PulseConnection : IAsyncDisposable, IDisposable
     public PulseMetadata Metadata { get; }
     public IReadOnlyDictionary<string, string> QueryParameters { get; }
 
-    public bool IsOpen => _transportConnection.IsOpen;
-    public string TransportName => _transportConnection.TransportName;
+    public bool IsOpen => _session.IsOpen;
+    public string TransportName => _session.TransportName;
 
-    internal IPulseTransportConnection TransportConnection => _transportConnection;
-    private readonly IPulseTransportConnection _transportConnection;
+    internal IPulseSession Session => _session;
+    private readonly IPulseSession _session;
 
     private bool _disposed;
 
-    public PulseConnection(IPulseTransportConnection transportConnection, string nodeId)
+    public PulseConnection(IPulseSession session, string nodeId)
     {
-        ArgumentNullException.ThrowIfNull(transportConnection);
+        ArgumentNullException.ThrowIfNull(session);
 
-        _transportConnection = transportConnection;
-        ConnectionId = transportConnection.ConnectionId;
-        QueryParameters = transportConnection.QueryParameters;
+        _session = session;
+        ConnectionId = session.SessionId;
+        QueryParameters = session.QueryParameters;
         NodeId = nodeId;
         Metadata = new PulseMetadata();
     }
 
-    public ValueTask SendAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken = default)
-        => _transportConnection.SendMessageAsync(payload, cancellationToken);
+    public async Task SendAsync(
+        ReadOnlyMemory<byte> envelopeFrame,
+        PulseDeliveryMode deliveryMode = PulseDeliveryMode.Reliable,
+        CancellationToken cancellationToken = default)
+    {
+        if (deliveryMode == PulseDeliveryMode.Datagram)
+        {
+            if (_session.Datagrams == null)
+                throw new NotSupportedException(
+                    $"Transport '{_session.TransportName}' does not support datagrams.");
+
+            await _session.Datagrams.SendDatagramAsync(envelopeFrame, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        IPulseStream stream = await _session.OpenStreamAsync(
+            PulseStreamDirection.UnidirectionalServerToClient,
+            cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            await stream.WriteEnvelopeAsync(envelopeFrame, cancellationToken).ConfigureAwait(false);
+            await stream.CompleteWritesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            await stream.DisposeAsync().ConfigureAwait(false);
+        }
+    }
 
     public async Task SendEventAsync<TPayload>(
         string handle,
         TPayload data,
         string version = "v1",
+        PulseDeliveryMode deliveryMode = PulseDeliveryMode.Reliable,
         CancellationToken cancellationToken = default)
     {
         PulseEnvelope<TPayload> envelope = new PulseEnvelope<TPayload>
         {
             Handle = handle,
             Body = data,
-            Kind = PulseKind.EVENT,
+            Kind = deliveryMode == PulseDeliveryMode.Datagram ? PulseKind.DATAGRAM_EVENT : PulseKind.EVENT,
             Version = version
         };
 
         byte[] envelopeBytes = MsgPackSerdes.Serialize(envelope);
-        await SendAsync(envelopeBytes, cancellationToken).ConfigureAwait(false);
+        await SendAsync(envelopeBytes, deliveryMode, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SendEventAsync(
         string handle,
         object data,
         string version = "v1",
+        PulseDeliveryMode deliveryMode = PulseDeliveryMode.Reliable,
         CancellationToken cancellationToken = default)
     {
         PulseEnvelope<object> envelope = new PulseEnvelope<object>
         {
             Handle = handle,
             Body = data,
-            Kind = PulseKind.EVENT,
+            Kind = deliveryMode == PulseDeliveryMode.Datagram ? PulseKind.DATAGRAM_EVENT : PulseKind.EVENT,
             Version = version
         };
 
         byte[] envelopeBytes = MsgPackSerdes.Serialize(envelope);
-        await SendAsync(envelopeBytes, cancellationToken).ConfigureAwait(false);
+        await SendAsync(envelopeBytes, deliveryMode, cancellationToken).ConfigureAwait(false);
     }
 
     internal ValueTask DisconnectAsync(
-        int closeCode,
+        int reasonCode = 1000,
         string? reason = null,
         CancellationToken cancellationToken = default)
-        => _transportConnection.CloseAsync(closeCode, reason, cancellationToken);
+        => _session.CloseAsync(reasonCode, TimeSpan.Zero, cancellationToken);
 
     public void SetMetadata(string key, object value)
     {
@@ -107,7 +136,7 @@ public class PulseConnection : IAsyncDisposable, IDisposable
         _disposed = true;
 
         Metadata.Dispose();
-        await _transportConnection.DisposeAsync().ConfigureAwait(false);
+        await _session.DisposeAsync().ConfigureAwait(false);
         GC.SuppressFinalize(this);
     }
 

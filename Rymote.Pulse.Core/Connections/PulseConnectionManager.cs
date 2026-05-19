@@ -24,11 +24,11 @@ public class PulseConnectionManager
         _logger = logger;
     }
 
-    public async Task<PulseConnection> AddConnectionAsync(IPulseTransportConnection transportConnection)
+    public async Task<PulseConnection> AddConnectionAsync(IPulseSession session)
     {
-        ArgumentNullException.ThrowIfNull(transportConnection);
+        ArgumentNullException.ThrowIfNull(session);
 
-        PulseConnection connection = new PulseConnection(transportConnection, _nodeId);
+        PulseConnection connection = new PulseConnection(session, _nodeId);
         _connections[connection.ConnectionId] = connection;
 
         if (_clusterStore != null)
@@ -67,24 +67,24 @@ public class PulseConnectionManager
 
     public async Task DisconnectAsync(
         string connectionId,
-        int closeCode = 1000,
+        int reasonCode = 1000,
         string? reason = null,
         CancellationToken cancellationToken = default)
     {
         PulseConnection? connection = GetConnection(connectionId);
         if (connection != null)
-            await DisconnectAsync(connection, closeCode, reason, cancellationToken);
+            await DisconnectAsync(connection, reasonCode, reason, cancellationToken);
     }
 
     public async Task DisconnectAsync(
         PulseConnection connection,
-        int closeCode = 1000,
+        int reasonCode = 1000,
         string? reason = null,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            await connection.DisconnectAsync(closeCode, reason, cancellationToken);
+            await connection.DisconnectAsync(reasonCode, reason, cancellationToken);
         }
         catch (Exception disconnectException)
         {

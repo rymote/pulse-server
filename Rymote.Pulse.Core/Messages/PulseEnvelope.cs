@@ -1,4 +1,4 @@
-﻿using MessagePack;
+using MessagePack;
 
 namespace Rymote.Pulse.Core.Messages;
 
@@ -24,11 +24,8 @@ public class PulseEnvelope<T>
     public string Version { get; set; } = "v1";
 
     [Key(6)]
-    public string? ClientCorrelationId { get; set; }
-
-    [Key(7)]
     public PulseStatus? Status { get; set; }
 
-    [Key(8)]
+    [Key(7)]
     public string? Error { get; set; }
 }

@@ -148,25 +148,27 @@ public class PulseGroup : IDisposable
         string handle,
         TPayload data,
         string version = "v1",
+        PulseDeliveryMode deliveryMode = PulseDeliveryMode.Reliable,
         CancellationToken cancellationToken = default
-    ) 
+    )
     {
         PulseEnvelope<TPayload> envelope = new PulseEnvelope<TPayload>
         {
             Handle = handle,
             Body = data,
-            Kind = PulseKind.EVENT,
+            Kind = deliveryMode == PulseDeliveryMode.Datagram ? PulseKind.DATAGRAM_EVENT : PulseKind.EVENT,
             Version = version
         };
 
         byte[] envelopeBytes = MsgPackSerdes.Serialize(envelope);
-        await BroadcastAsync(envelopeBytes, cancellationToken);
+        await BroadcastAsync(envelopeBytes, deliveryMode, cancellationToken);
     }
 
     public async Task SendEventAsync(
         string handle,
         object data,
         string version = "v1",
+        PulseDeliveryMode deliveryMode = PulseDeliveryMode.Reliable,
         CancellationToken cancellationToken = default
     )
     {
@@ -174,15 +176,18 @@ public class PulseGroup : IDisposable
         {
             Handle = handle,
             Body = data,
-            Kind = PulseKind.EVENT,
+            Kind = deliveryMode == PulseDeliveryMode.Datagram ? PulseKind.DATAGRAM_EVENT : PulseKind.EVENT,
             Version = version
         };
 
         byte[] envelopeBytes = MsgPackSerdes.Serialize(envelope);
-        await BroadcastAsync(envelopeBytes, cancellationToken);
+        await BroadcastAsync(envelopeBytes, deliveryMode, cancellationToken);
     }
-    
-    public async Task BroadcastAsync(byte[] payload, CancellationToken cancellationToken = default)
+
+    public async Task BroadcastAsync(
+        byte[] payload,
+        PulseDeliveryMode deliveryMode = PulseDeliveryMode.Reliable,
+        CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         UpdateLastActivity();
@@ -193,12 +198,12 @@ public class PulseGroup : IDisposable
             return;
 
         ConcurrentBag<string> failedConnections = new ConcurrentBag<string>();
-        
+
         Task[] tasks = new Task[activeConnections.Count];
         for (int index = 0; index < activeConnections.Count; index++)
         {
             PulseConnection connection = activeConnections[index];
-            tasks[index] = SendToConnectionAsync(connection, payload, failedConnections, cancellationToken);
+            tasks[index] = SendToConnectionAsync(connection, payload, deliveryMode, failedConnections, cancellationToken);
         }
 
         await Task.WhenAll(tasks).ConfigureAwait(false);
@@ -240,15 +245,23 @@ public class PulseGroup : IDisposable
         return toRemove.Count;
     }
 
-    private async Task SendToConnectionAsync(PulseConnection connection, byte[] payload,
-        ConcurrentBag<string> failedConnections, CancellationToken cancellationToken)
+    private async Task SendToConnectionAsync(
+        PulseConnection connection,
+        byte[] payload,
+        PulseDeliveryMode deliveryMode,
+        ConcurrentBag<string> failedConnections,
+        CancellationToken cancellationToken)
     {
         try
         {
             if (connection.IsOpen)
-                await connection.SendAsync(payload, cancellationToken).ConfigureAwait(false);
+                await connection.SendAsync(payload, deliveryMode, cancellationToken).ConfigureAwait(false);
             else
                 failedConnections.Add(connection.ConnectionId);
+        }
+        catch (NotSupportedException)
+        {
+            // Datagrams not supported on this transport — skip rather than mark as failed.
         }
         catch (Exception)
         {

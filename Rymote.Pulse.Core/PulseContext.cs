@@ -1,6 +1,3 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Net.WebSockets;
 using Rymote.Pulse.Core.Connections;
 using Rymote.Pulse.Core.Logging;
 using Rymote.Pulse.Core.Messages;
@@ -15,9 +12,30 @@ public class PulseContext
     public IPulseLogger Logger { get; }
     public byte[] RawRequestBytes { get; }
     public PulseEnvelope<object> UntypedRequest { get; }
-    internal Func<byte[], Task>? SendChunkAsync { get; set; }
-    public object? TypedResponseEnvelope { get; set; }
     public Dictionary<string, string> Parameters { get; internal set; }
+    public CancellationToken CancellationToken { get; }
+
+    public PulseContext(
+        PulseConnectionManager connectionManager,
+        PulseConnection connection,
+        byte[] rawBytes,
+        IPulseLogger logger,
+        Dictionary<string, string> parameters,
+        CancellationToken cancellationToken)
+    {
+        ConnectionManager = connectionManager;
+        Connection = connection;
+        Logger = logger;
+        RawRequestBytes = rawBytes;
+        UntypedRequest = MsgPackSerdes.Deserialize<PulseEnvelope<object>>(rawBytes);
+        Parameters = parameters;
+        CancellationToken = cancellationToken;
+    }
+
+    public PulseEnvelope<TRequest> GetTypedRequestEnvelope<TRequest>()
+    {
+        return MsgPackSerdes.Deserialize<PulseEnvelope<TRequest>>(RawRequestBytes);
+    }
 
     public TParameter? GetParameter<TParameter>(string name)
     {
@@ -42,37 +60,22 @@ public class PulseContext
         {
             return (TParameter)Convert.ChangeType(value, typeof(TParameter));
         }
-        catch (InvalidCastException ex)
+        catch (InvalidCastException invalidCastException)
         {
-            throw new InvalidOperationException($"Cannot convert parameter '{name}' to type {typeof(TParameter).Name}.",
-                ex);
+            throw new InvalidOperationException(
+                $"Cannot convert parameter '{name}' to type {typeof(TParameter).Name}.",
+                invalidCastException);
         }
-    }
-
-    public PulseContext(PulseConnectionManager connectionManager, PulseConnection connection, byte[] rawBytes,
-        IPulseLogger logger, Dictionary<string, string> parameters)
-    {
-        ConnectionManager = connectionManager;
-        Connection = connection;
-        Logger = logger;
-        RawRequestBytes = rawBytes;
-        UntypedRequest = MsgPackSerdes.Deserialize<PulseEnvelope<object>>(rawBytes);
-        Parameters = parameters;
-    }
-
-    public PulseEnvelope<T> GetTypedRequestEnvelope<T>()
-    {
-        return MsgPackSerdes.Deserialize<PulseEnvelope<T>>(RawRequestBytes);
     }
 
     public Task SendEventAsync<TPayload>(
         string handle,
         TPayload data,
         string version = "v1",
-        CancellationToken cancellationToken = default
-    )
+        PulseDeliveryMode deliveryMode = PulseDeliveryMode.Reliable,
+        CancellationToken cancellationToken = default)
     {
-        return Connection.SendEventAsync(handle, data, version, cancellationToken);
+        return Connection.SendEventAsync(handle, data, version, deliveryMode, cancellationToken);
     }
 
     public Task SendEventAsync<TPayload>(
@@ -80,10 +83,10 @@ public class PulseContext
         string handle,
         TPayload data,
         string version = "v1",
-        CancellationToken cancellationToken = default
-    )
+        PulseDeliveryMode deliveryMode = PulseDeliveryMode.Reliable,
+        CancellationToken cancellationToken = default)
     {
-        return connection.SendEventAsync(handle, data, version, cancellationToken);
+        return connection.SendEventAsync(handle, data, version, deliveryMode, cancellationToken);
     }
 
     public Task SendEventAsync<TPayload>(
@@ -91,9 +94,9 @@ public class PulseContext
         string handle,
         TPayload data,
         string version = "v1",
-        CancellationToken cancellationToken = default
-    )
+        PulseDeliveryMode deliveryMode = PulseDeliveryMode.Reliable,
+        CancellationToken cancellationToken = default)
     {
-        return group.SendEventAsync(handle, data, version, cancellationToken);
+        return group.SendEventAsync(handle, data, version, deliveryMode, cancellationToken);
     }
 }

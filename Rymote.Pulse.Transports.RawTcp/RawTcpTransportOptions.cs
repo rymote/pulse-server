@@ -7,7 +7,9 @@ namespace Rymote.Pulse.Transports.RawTcp;
 public class RawTcpTransportOptions
 {
     public IPEndPoint Endpoint { get; set; } = new IPEndPoint(IPAddress.Any, 9000);
-    public int MaxMessageSizeInBytes { get; set; } = 10 * 1024 * 1024;
+    public int MaxFramePayloadSizeInBytes { get; set; } = 10 * 1024 * 1024;
+    public int MaxDatagramEnvelopeSizeInBytes { get; set; } = 1200;
+    public bool DatagramsEnabled { get; set; } = true;
     public int? MaxConcurrentConnections { get; set; }
     public X509Certificate2? ServerCertificate { get; set; }
     public RemoteCertificateValidationCallback? ClientCertificateValidationCallback { get; set; }
@@ -15,9 +17,9 @@ public class RawTcpTransportOptions
 
     internal void Validate()
     {
-        if (MaxMessageSizeInBytes <= 0)
+        if (MaxFramePayloadSizeInBytes <= 0)
             throw new InvalidOperationException(
-                $"{nameof(RawTcpTransportOptions)}.{nameof(MaxMessageSizeInBytes)} must be greater than zero.");
+                $"{nameof(RawTcpTransportOptions)}.{nameof(MaxFramePayloadSizeInBytes)} must be greater than zero.");
 
         if (MaxConcurrentConnections is <= 0)
             throw new InvalidOperationException(

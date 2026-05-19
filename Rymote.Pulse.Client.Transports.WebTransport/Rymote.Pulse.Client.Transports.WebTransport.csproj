@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+
+        <PackageId>Rymote.Pulse.Client.Transports.WebTransport</PackageId>
+        <Authors>Rymote</Authors>
+        <Description>WebTransport client transport for Rymote.Pulse — HTTP/3 + WT CONNECT on System.Net.Quic</Description>
+
+        <EnablePreviewFeatures>true</EnablePreviewFeatures>
+        <GenerateRequiresPreviewFeaturesAttribute>true</GenerateRequiresPreviewFeaturesAttribute>
+        <NoWarn>$(NoWarn);SYSLIB0058;CA2252;CA1416</NoWarn>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Rymote.Pulse.Core\Rymote.Pulse.Core.csproj" />
+      <ProjectReference Include="..\Rymote.Pulse.Client\Rymote.Pulse.Client.csproj" />
+    </ItemGroup>
+
+</Project>

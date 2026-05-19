@@ -5,8 +5,10 @@ namespace Rymote.Pulse.Transports.WebSockets.HttpListener;
 public class WebSocketHttpListenerTransportOptions
 {
     public IList<string> Prefixes { get; } = new List<string>();
-    public int BufferSizeInBytes { get; set; } = 4 * 1024;
-    public int MaxMessageSizeInBytes { get; set; } = 10 * 1024 * 1024;
+    public int InitialReceiveBufferSizeInBytes { get; set; } = 4 * 1024;
+    public int MaxFramePayloadSizeInBytes { get; set; } = 10 * 1024 * 1024;
+    public int MaxDatagramEnvelopeSizeInBytes { get; set; } = 1200;
+    public bool DatagramsEnabled { get; set; } = true;
     public int? MaxConcurrentConnections { get; set; }
     public AuthenticationSchemes AuthenticationSchemes { get; set; } = AuthenticationSchemes.Anonymous;
     public TimeSpan ShutdownDrainTimeout { get; set; } = TimeSpan.FromSeconds(10);
@@ -17,13 +19,13 @@ public class WebSocketHttpListenerTransportOptions
             throw new InvalidOperationException(
                 $"{nameof(WebSocketHttpListenerTransportOptions)}.{nameof(Prefixes)} must contain at least one HTTP prefix (e.g. \"http://+:8080/pulse/\").");
 
-        if (BufferSizeInBytes <= 0)
+        if (InitialReceiveBufferSizeInBytes <= 0)
             throw new InvalidOperationException(
-                $"{nameof(WebSocketHttpListenerTransportOptions)}.{nameof(BufferSizeInBytes)} must be greater than zero.");
+                $"{nameof(WebSocketHttpListenerTransportOptions)}.{nameof(InitialReceiveBufferSizeInBytes)} must be greater than zero.");
 
-        if (MaxMessageSizeInBytes < BufferSizeInBytes)
+        if (MaxFramePayloadSizeInBytes <= 0)
             throw new InvalidOperationException(
-                $"{nameof(WebSocketHttpListenerTransportOptions)}.{nameof(MaxMessageSizeInBytes)} must be greater than or equal to {nameof(BufferSizeInBytes)}.");
+                $"{nameof(WebSocketHttpListenerTransportOptions)}.{nameof(MaxFramePayloadSizeInBytes)} must be greater than zero.");
 
         if (MaxConcurrentConnections is <= 0)
             throw new InvalidOperationException(

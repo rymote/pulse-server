@@ -34,27 +34,24 @@ internal sealed class RawTcpTransportHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await foreach (IPulseTransportConnection transportConnection in
-            _transport.AcceptConnectionsAsync(stoppingToken))
+        await foreach (IPulseSession session in _transport.AcceptSessionsAsync(stoppingToken))
         {
-            string connectionId = transportConnection.ConnectionId;
+            string sessionId = session.SessionId;
 
             Task handlerTask = Task.Run(
-                () => HandleConnectionAsync(transportConnection, stoppingToken),
+                () => HandleSessionAsync(session, stoppingToken),
                 CancellationToken.None);
 
-            _activeHandlers[connectionId] = handlerTask;
+            _activeHandlers[sessionId] = handlerTask;
             _ = handlerTask.ContinueWith(
-                _ => _activeHandlers.TryRemove(connectionId, out Task? _),
+                _ => _activeHandlers.TryRemove(sessionId, out Task? _),
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
         }
     }
 
-    private async Task HandleConnectionAsync(
-        IPulseTransportConnection transportConnection,
-        CancellationToken cancellationToken)
+    private async Task HandleSessionAsync(IPulseSession session, CancellationToken cancellationToken)
     {
         bool concurrencySemaphoreAcquired = false;
 
@@ -65,28 +62,21 @@ internal sealed class RawTcpTransportHostedService : BackgroundService
                 concurrencySemaphoreAcquired = await _concurrencySemaphore.WaitAsync(0, cancellationToken);
                 if (!concurrencySemaphoreAcquired)
                 {
-                    _logger.LogWarning(
-                        $"[{transportConnection.ConnectionId}] Rejected: concurrency limit reached");
-                    await transportConnection.CloseAsync(1008, "Server at capacity", CancellationToken.None);
-                    await transportConnection.DisposeAsync();
+                    _logger.LogWarning($"[{session.SessionId}] Rejected: concurrency limit reached");
+                    await session.CloseAsync(reasonCode: 5, drainTimeout: TimeSpan.Zero, CancellationToken.None);
+                    await session.DisposeAsync();
                     return;
                 }
             }
 
-            await PulseConnectionLifecycle.HandleAsync(
-                transportConnection,
-                _dispatcher,
-                _logger,
-                cancellationToken);
+            await PulseSessionLifecycle.HandleAsync(session, _dispatcher, _logger, cancellationToken);
         }
         catch (OperationCanceledException)
         {
         }
         catch (Exception unhandledException)
         {
-            _logger.LogError(
-                $"[{transportConnection.ConnectionId}] Unhandled connection exception",
-                unhandledException);
+            _logger.LogError($"[{session.SessionId}] Unhandled session exception", unhandledException);
         }
         finally
         {
@@ -101,20 +91,17 @@ internal sealed class RawTcpTransportHostedService : BackgroundService
 
         await _transport.DisposeAsync();
 
-        foreach (string connectionId in _activeHandlers.Keys.ToArray())
+        foreach (string sessionId in _activeHandlers.Keys.ToArray())
         {
             try
             {
                 await _dispatcher.ConnectionManager.DisconnectAsync(
-                    connectionId,
-                    closeCode: 1001,
-                    reason: "Server shutting down",
-                    cancellationToken: cancellationToken);
+                    sessionId, reasonCode: 1001, reason: "Server shutting down", cancellationToken);
             }
             catch (Exception disconnectException)
             {
                 _logger.LogDebug(
-                    $"Error disconnecting {connectionId} during shutdown: {disconnectException.Message}");
+                    $"Error disconnecting {sessionId} during shutdown: {disconnectException.Message}");
             }
         }
 
@@ -129,7 +116,7 @@ internal sealed class RawTcpTransportHostedService : BackgroundService
         catch (OperationCanceledException)
         {
             _logger.LogWarning(
-                $"{_activeHandlers.Count} raw TCP connection handler(s) did not drain within {_options.ShutdownDrainTimeout}.");
+                $"{_activeHandlers.Count} raw TCP session handler(s) did not drain within {_options.ShutdownDrainTimeout}.");
         }
         catch (Exception drainException)
         {

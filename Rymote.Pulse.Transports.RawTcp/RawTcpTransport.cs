@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
@@ -5,6 +6,7 @@ using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using Rymote.Pulse.Core.Logging;
 using Rymote.Pulse.Core.Transport;
+using Rymote.Pulse.Transports.Multiplexing;
 
 namespace Rymote.Pulse.Transports.RawTcp;
 
@@ -22,7 +24,7 @@ internal sealed class RawTcpTransport : IPulseTransport, IAsyncDisposable
         _logger = logger;
     }
 
-    public async IAsyncEnumerable<IPulseTransportConnection> AcceptConnectionsAsync(
+    public async IAsyncEnumerable<IPulseSession> AcceptSessionsAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         _tcpListener = new TcpListener(_options.Endpoint);
@@ -37,11 +39,10 @@ internal sealed class RawTcpTransport : IPulseTransport, IAsyncDisposable
             TcpClient? tcpClient = await AcceptTcpClientSafelyAsync(cancellationToken).ConfigureAwait(false);
             if (tcpClient == null) yield break;
 
-            IPulseTransportConnection? transportConnection =
-                await TryEstablishConnectionAsync(tcpClient, cancellationToken).ConfigureAwait(false);
-            if (transportConnection == null) continue;
+            IPulseSession? session = await TryEstablishSessionAsync(tcpClient, cancellationToken).ConfigureAwait(false);
+            if (session == null) continue;
 
-            yield return transportConnection;
+            yield return session;
         }
     }
 
@@ -56,12 +57,11 @@ internal sealed class RawTcpTransport : IPulseTransport, IAsyncDisposable
         catch (SocketException) { return null; }
     }
 
-    private async Task<IPulseTransportConnection?> TryEstablishConnectionAsync(
+    private async Task<IPulseSession?> TryEstablishSessionAsync(
         TcpClient tcpClient,
         CancellationToken cancellationToken)
     {
-        string connectionId = Guid.NewGuid().ToString();
-        Stream stream;
+        Stream byteStream;
         X509Certificate2? peerCertificate = null;
 
         if (_options.ServerCertificate != null)
@@ -89,7 +89,7 @@ internal sealed class RawTcpTransport : IPulseTransport, IAsyncDisposable
                         ?? new X509Certificate2(remoteCertificate);
                 }
 
-                stream = sslStream;
+                byteStream = sslStream;
             }
             catch (Exception authException)
             {
@@ -103,15 +103,33 @@ internal sealed class RawTcpTransport : IPulseTransport, IAsyncDisposable
         }
         else
         {
-            stream = tcpClient.GetStream();
+            byteStream = tcpClient.GetStream();
         }
 
-        return new RawTcpTransportConnection(
-            connectionId,
-            tcpClient,
-            stream,
-            peerCertificate,
-            _options.MaxMessageSizeInBytes);
+        Dictionary<string, object> initialMetadata = new Dictionary<string, object>();
+        if (tcpClient.Client.RemoteEndPoint is IPEndPoint remoteEndPoint)
+            initialMetadata["remote_endpoint"] = remoteEndPoint;
+        if (peerCertificate != null)
+            initialMetadata["peer_certificate"] = peerCertificate;
+
+        PulseStreamMultiplexerOptions multiplexerOptions = new PulseStreamMultiplexerOptions
+        {
+            MaxFramePayloadSizeInBytes = _options.MaxFramePayloadSizeInBytes,
+            MaxDatagramEnvelopeSizeInBytes = _options.MaxDatagramEnvelopeSizeInBytes,
+            DatagramsEnabled = _options.DatagramsEnabled
+        };
+
+        PulseStreamMultiplexer multiplexer = new PulseStreamMultiplexer(
+            byteStream,
+            isServerSide: true,
+            transportName: Name,
+            logger: _logger,
+            options: multiplexerOptions,
+            queryParameters: null,
+            initialMetadata: initialMetadata);
+
+        multiplexer.Start();
+        return multiplexer;
     }
 
     private void StopListenerSafely()

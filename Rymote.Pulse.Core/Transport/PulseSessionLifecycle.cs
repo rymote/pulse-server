@@ -3,23 +3,23 @@ using Rymote.Pulse.Core.Logging;
 
 namespace Rymote.Pulse.Core.Transport;
 
-public static class PulseConnectionLifecycle
+public static class PulseSessionLifecycle
 {
     public static async Task HandleAsync(
-        IPulseTransportConnection transportConnection,
+        IPulseSession session,
         PulseDispatcher dispatcher,
         IPulseLogger logger,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(transportConnection);
+        ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(logger);
 
         PulseConnection connection = await dispatcher.ConnectionManager
-            .AddConnectionAsync(transportConnection)
+            .AddConnectionAsync(session)
             .ConfigureAwait(false);
 
-        foreach (KeyValuePair<string, object> initialMetadataEntry in transportConnection.InitialMetadata)
+        foreach (KeyValuePair<string, object> initialMetadataEntry in session.InitialMetadata)
             connection.SetMetadata(initialMetadataEntry.Key, initialMetadataEntry.Value);
         connection.SetMetadata("connected_at", DateTime.UtcNow);
 
@@ -36,15 +36,11 @@ public static class PulseConnectionLifecycle
         }
         catch (Exception onConnectException)
         {
-            logger.LogError(
-                $"[{connection.ConnectionId}] OnConnect error",
-                onConnectException);
+            logger.LogError($"[{connection.ConnectionId}] OnConnect error", onConnectException);
 
             try
             {
-                await transportConnection
-                    .CloseAsync(1008, onConnectException.Message, CancellationToken.None)
-                    .ConfigureAwait(false);
+                await session.CloseAsync(1008, TimeSpan.Zero, CancellationToken.None).ConfigureAwait(false);
             }
             catch
             {
@@ -59,7 +55,7 @@ public static class PulseConnectionLifecycle
 
         try
         {
-            await PulseConnectionPipeline.RunAsync(connection, dispatcher, logger, cancellationToken)
+            await PulseSessionPipeline.RunAsync(connection, dispatcher, logger, cancellationToken)
                 .ConfigureAwait(false);
         }
         finally
@@ -70,9 +66,7 @@ public static class PulseConnectionLifecycle
             }
             catch (Exception onDisconnectException)
             {
-                logger.LogError(
-                    $"[{connection.ConnectionId}] OnDisconnect error",
-                    onDisconnectException);
+                logger.LogError($"[{connection.ConnectionId}] OnDisconnect error", onDisconnectException);
             }
 
             bool connectedAtExists = connection.Metadata.TryGet("connected_at", out DateTime connectedAt);

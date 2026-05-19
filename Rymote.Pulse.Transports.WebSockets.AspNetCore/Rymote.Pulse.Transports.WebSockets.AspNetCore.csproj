@@ -12,6 +12,7 @@
 
     <ItemGroup>
       <ProjectReference Include="..\Rymote.Pulse.Core\Rymote.Pulse.Core.csproj" />
+      <ProjectReference Include="..\Rymote.Pulse.Transports.Multiplexing\Rymote.Pulse.Transports.Multiplexing.csproj" />
     </ItemGroup>
 
     <ItemGroup>
