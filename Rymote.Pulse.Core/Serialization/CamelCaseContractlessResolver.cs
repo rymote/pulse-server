@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using MessagePack;
 using MessagePack.Formatters;
 using MessagePack.Resolvers;
@@ -47,9 +48,33 @@ public sealed class CamelCaseContractlessResolver : IFormatterResolver
         private readonly Dictionary<int, PropertyInfo> integerKeyLookup;
         private readonly Func<T> objectFactory;
 
+        /// <summary>
+        /// Picks a construction strategy that works for both classic POCOs and modern positional
+        /// records. POCOs with a parameterless constructor use it directly. Positional records
+        /// (<c>record Foo(string Bar)</c>) and other types lacking a parameterless ctor get an
+        /// uninitialised instance via <see cref="RuntimeHelpers.GetUninitializedObject"/> — the
+        /// deserialiser then fills each property through its compiler-generated <c>init</c>
+        /// setter. Avoids forcing every DTO to declare a parameterless ctor.
+        /// </summary>
+        private static Func<T> BuildObjectFactory()
+        {
+            ConstructorInfo? parameterlessConstructor = typeof(T).GetConstructor(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                binder: null,
+                types: Type.EmptyTypes,
+                modifiers: null);
+
+            if (parameterlessConstructor is not null)
+            {
+                return () => (T)parameterlessConstructor.Invoke(parameters: null);
+            }
+
+            return () => (T)RuntimeHelpers.GetUninitializedObject(typeof(T));
+        }
+
         public CamelCaseFormatter()
         {
-            objectFactory = () => Activator.CreateInstance<T>();
+            objectFactory = BuildObjectFactory();
             propertyInfoArray = typeof(T)
                 .GetProperties(BindingFlags.Instance | BindingFlags.Public)
                 .Where(propertyInfo => propertyInfo.CanRead && propertyInfo.CanWrite)
