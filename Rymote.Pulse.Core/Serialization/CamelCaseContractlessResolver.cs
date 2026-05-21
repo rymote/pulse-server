@@ -46,17 +46,21 @@ public sealed class CamelCaseContractlessResolver : IFormatterResolver
         private readonly PropertyInfo[] propertyInfoArray;
         private readonly Dictionary<string, PropertyInfo> stringKeyLookup;
         private readonly Dictionary<int, PropertyInfo> integerKeyLookup;
-        private readonly Func<T> objectFactory;
+        private readonly Func<object> boxedObjectFactory;
 
         /// <summary>
         /// Picks a construction strategy that works for both classic POCOs and modern positional
-        /// records. POCOs with a parameterless constructor use it directly. Positional records
-        /// (<c>record Foo(string Bar)</c>) and other types lacking a parameterless ctor get an
-        /// uninitialised instance via <see cref="RuntimeHelpers.GetUninitializedObject"/> — the
-        /// deserialiser then fills each property through its compiler-generated <c>init</c>
-        /// setter. Avoids forcing every DTO to declare a parameterless ctor.
+        /// records (class or struct). Always returns the instance as <see cref="object"/> so the
+        /// caller can hold a single boxed reference while mutating properties via
+        /// <see cref="PropertyInfo.SetValue(object, object)"/>. This is essential for value-type
+        /// targets — calling <c>SetValue</c> on an unboxed struct silently mutates a copy.
+        ///
+        /// POCOs with a parameterless ctor use it directly. Records with only a primary
+        /// constructor, and structs without an explicit ctor, fall back to
+        /// <see cref="RuntimeHelpers.GetUninitializedObject"/> which yields a zeroed boxed
+        /// instance the deserialiser can populate via init setters.
         /// </summary>
-        private static Func<T> BuildObjectFactory()
+        private static Func<object> BuildBoxedObjectFactory()
         {
             ConstructorInfo? parameterlessConstructor = typeof(T).GetConstructor(
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
@@ -66,15 +70,15 @@ public sealed class CamelCaseContractlessResolver : IFormatterResolver
 
             if (parameterlessConstructor is not null)
             {
-                return () => (T)parameterlessConstructor.Invoke(parameters: null);
+                return () => parameterlessConstructor.Invoke(parameters: null)!;
             }
 
-            return () => (T)RuntimeHelpers.GetUninitializedObject(typeof(T));
+            return () => RuntimeHelpers.GetUninitializedObject(typeof(T));
         }
 
         public CamelCaseFormatter()
         {
-            objectFactory = BuildObjectFactory();
+            boxedObjectFactory = BuildBoxedObjectFactory();
             propertyInfoArray = typeof(T)
                 .GetProperties(BindingFlags.Instance | BindingFlags.Public)
                 .Where(propertyInfo => propertyInfo.CanRead && propertyInfo.CanWrite)
@@ -129,7 +133,12 @@ public sealed class CamelCaseContractlessResolver : IFormatterResolver
         {
             if (reader.TryReadNil()) return default!;
 
-            T instance = objectFactory();
+            // Hold a single boxed instance throughout so each SetValue call mutates the same
+            // backing object. For class types this is the live instance; for value types this is
+            // the boxed copy, which we unbox at the end. Mutating an unboxed struct via SetValue
+            // would silently lose all property writes — every strongly-typed-id round-trip
+            // (e.g. WorkspaceId, UserId) would otherwise revert to default(T).
+            object boxedInstance = boxedObjectFactory();
             int mapCount = reader.ReadMapHeader();
 
             for (int mapIndex = 0; mapIndex < mapCount; mapIndex++)
@@ -160,10 +169,10 @@ public sealed class CamelCaseContractlessResolver : IFormatterResolver
                 }
 
                 object? propertyValue = MessagePackSerializer.Deserialize(targetPropertyInfo.PropertyType, ref reader, options);
-                targetPropertyInfo.SetValue(instance, propertyValue);
+                targetPropertyInfo.SetValue(boxedInstance, propertyValue);
             }
 
-            return instance;
+            return (T)boxedInstance;
         }
 
         private static string ConvertToCamelCase(string name)
